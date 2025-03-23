@@ -134,7 +134,16 @@ const PDFConverter = () => {
   return (
     <div className="app-container">
       <input type="file" accept=".pdf" onChange={handleFileChange} />
+      <div>
+        <button onClick={() => setConversionType('text')}>テキスト</button>
+        <button onClick={() => setConversionType('excel')}>Excel</button>
+        <button onClick={() => setConversionType('word')}>Word</button>
+      </div>
+      <label>
+        <input type="checkbox" checked={useOcr} onChange={(e) => setUseOcr(e.target.checked)} /> OCRを使用する
+      </label>
       <button onClick={handleConvert} disabled={loading}>{loading ? '変換中...' : '変換する'}</button>
+      {pdfPreview && <iframe src={pdfPreview} width="100%" height="400px"></iframe>}
       {error && <div className="error-message">{error}</div>}
       {processingStatus && <p>{processingStatus} ({progress}%)</p>}
     </div>
