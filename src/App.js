@@ -58,65 +58,60 @@ const PDFConverter = () => {
   }, [pdfPreview]);
   
   // OCRを使用したテキスト抽出（実際の実装）
-  const extractTextWithOCR = async (pdfData) => {
-    try {
-      setProcessingStatus('OCRでテキストを抽出中...');
-      
-      // PDFドキュメントをロード
-      // eslint-disable-next-line no-unused-vars
-      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
-      const pdf = await loadingTask.promise;
-      
-      let fullText = '';
-      const totalPages = pdf.numPages;
-      
-      // Tesseract.jsワーカーを作成
-      const worker = await createWorker('eng');
-      
-      // 各ページを処理
-      for (let i = 1; i <= totalPages; i++) {
-        // 進捗状況の更新（OCRはページごとに20%ずつ進行）
-        const pageProgressBase = ((i - 1) / totalPages) * 100;
-        setProgress(Math.floor(pageProgressBase));
-        setProcessingStatus(`OCR処理中: ${i}/${totalPages}ページ...`);
-        
-        // ページをレンダリング
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 1.5 }); // 高解像度でレンダリング
-        
-        // キャンバス要素の作成
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
-        
-        // ページをキャンバスにレンダリング
-        await page.render({
-          canvasContext: context,
-          viewport: viewport
-        }).promise;
-        
-        // キャンバスからデータURLを取得
-        const dataUrl = canvas.toDataURL('image/png');
-        
-        // OCRでテキスト認識
-        const { data } = await worker.recognize(dataUrl);
-        fullText += data.text + '\n\n';
-        
-        // 各ページ完了後の進捗更新
-        setProgress(Math.floor(pageProgressBase + (1 / totalPages) * 50));
+const extractTextWithOCR = async (pdfData) => {
+  setProcessingStatus('OCRでテキストを抽出中...');
+
+  try {
+    const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+    const pdf = await loadingTask.promise;
+
+    let fullText = '';
+    const totalPages = pdf.numPages;
+
+    const worker = await createWorker({
+      logger: m => {
+        const progress = Math.floor(m.progress * 100);
+        setProgress(progress);
+        setProcessingStatus(`OCR処理中 (${progress}%)`);
       }
-      
-      // ワーカーを終了
-      await worker.terminate();
-      
-      return fullText;
-    } catch (error) {
-      console.error('OCR抽出エラー:', error);
-      setError('OCR処理中にエラーが発生しました');
-      throw error;
+    });
+
+    await worker.loadLanguage('jpn+eng'); // 日本語と英語を指定
+    await worker.initialize('jpn+eng');
+
+    for (let i = 1; i <= totalPages; i++) {
+      setProcessingStatus(`OCR処理中: ${i}/${totalPages}ページ...`);
+
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 2.0 });
+
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const { data: { text } } = await worker.recognize(dataUrl);
+      fullText += text + '\n\n';
+
+      setProgress(Math.floor((i / totalPages) * 100));
     }
-  };
+
+    await worker.terminate();
+
+    return fullText;
+  } catch (error) {
+    console.error('OCR抽出エラー:', error);
+    setError('OCR処理中にエラーが発生しました: ' + error.message);
+    await worker.terminate();
+    throw error;
+  }
+};
+
+	
+	
   
   // 通常のPDFからのテキスト抽出（実際の実装）
   const extractTextFromPDF = async (pdfData) => {
