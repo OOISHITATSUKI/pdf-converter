@@ -58,12 +58,13 @@ const PDFConverter = () => {
   }, [pdfPreview]);
   
   // OCRを使用したテキスト抽出（実際の実装）
+// OCR用の関数
 const extractTextWithOCR = async (pdfData) => {
   setProcessingStatus('OCRでテキストを抽出中...');
-
   try {
-    const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfData) }); // 明示的指定が重要
     const pdf = await loadingTask.promise;
+
 
     let fullText = '';
     const totalPages = pdf.numPages;
@@ -114,13 +115,19 @@ const extractTextWithOCR = async (pdfData) => {
 	
   
   // 通常のPDFからのテキスト抽出（実際の実装）
-  const extractTextFromPDF = async (pdfData) => {
-    try {
-      setProcessingStatus('PDFからテキストを抽出中...');
+  // 通常のPDFテキスト抽出用の関数
+// 通常のPDFテキスト抽出用の関数
+const extractTextFromPDF = async (pdfData) => {
+  setProcessingStatus('PDFからテキストを抽出中...');
+  try {
+    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfData) }); // 明示的指定が重要
+    const pdf = await loadingTask.promise;
+    //...後続処理は変更なし
       
       // PDFドキュメントをロード
       // eslint-disable-next-line no-unused-vars
-      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfData) });
+
       const pdf = await loadingTask.promise;
       
       let fullText = '';
@@ -300,6 +307,7 @@ const extractTextWithOCR = async (pdfData) => {
   setProcessingStatus('ファイルを処理中...すべての処理はブラウザ内で実行され、データはサーバーに送信されません。');
 
   try {
+    // ファイルをArrayBufferとして読み込み
     const pdfData = await new Promise((resolve, reject) => {
       const fileReader = new FileReader();
 
@@ -309,26 +317,61 @@ const extractTextWithOCR = async (pdfData) => {
       fileReader.readAsArrayBuffer(file);
     });
 
-    let success = false;
+    let extractedText;
+
+    // OCR使用の有無で分岐
+    if (useOcr) {
+      extractedText = await extractTextWithOCR(pdfData);
+    } else {
+      extractedText = await extractTextFromPDF(pdfData);
+    }
+
+    // 変換タイプに基づきダウンロード処理
+    let blob;
+    let fileExtension;
 
     switch (conversionType) {
       case 'text':
-        success = await convertToText(pdfData);
+        blob = new Blob([extractedText], { type: 'text/plain;charset=utf-8' });
+        fileExtension = 'txt';
         break;
+
       case 'excel':
-        success = await convertToExcel(pdfData);
+        const lines = extractedText.split('\n').filter(line => line.trim() !== '');
+        const data = lines.map(line => line.split(/\t+|\s{2,}/));
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(data);
+        XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+        const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        fileExtension = 'xlsx';
         break;
+
       case 'word':
-        success = await convertToWord(pdfData);
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+                      <style>body{font-family:Arial;line-height:1.5;}p{margin-bottom:0.8em;}</style></head>
+                      <body>${extractedText.split('\n').map(line => line.trim() ? `<p>${line}</p>` : '').join('')}</body></html>`;
+        blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+        fileExtension = 'docx';
         break;
+
       default:
-        setError('不正な変換タイプです');
+        throw new Error('不正な変換タイプです');
     }
 
-    if (success) {
-      setProgress(100);
-      setProcessingStatus('変換完了。ファイルは自動的にダウンロードされました。');
-    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${file.name.replace('.pdf', '')}.${fileExtension}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    setProgress(100);
+    setProcessingStatus('変換完了。ファイルは自動的にダウンロードされました。ブラウザ内で処理され、サーバーには保存されていません。');
+
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+
   } catch (err) {
     console.error('変換エラー:', err);
     setError(typeof err === 'string' ? err : '変換処理中にエラーが発生しました');
@@ -336,6 +379,7 @@ const extractTextWithOCR = async (pdfData) => {
     setLoading(false);
   }
 };
+
 
 
   return (
