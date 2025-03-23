@@ -15,35 +15,18 @@ const PDFConverter = () => {
   const [processingStatus, setProcessingStatus] = useState('');
   const [pdfPreview, setPdfPreview] = useState(null);
   
-// PDF.jsのワーカー設定
-useEffect(() => {
-  // CDNの読み込みを確認するログ
-  console.log('PDF.js version:', pdfjsLib.version);
-  
-  // CDNのURLを明示的に指定
-  const workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-  console.log('Worker URL:', workerSrc);
-  
-  // ワーカーの読み込みを設定
-  pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
-  
-  // ワーカーの読み込み状態を確認する関数
-  const checkWorkerLoaded = () => {
-    try {
-      // PDF.jsの機能をテスト
-      const emptyPdf = new Uint8Array([]);
-      const loadingTask = pdfjsLib.getDocument({ data: emptyPdf });
-      console.log('PDF.js worker is properly initialized');
-      return true;
-    } catch (err) {
-      console.error('PDF.js worker initialization failed:', err);
-      return false;
-    }
-  };
-  
-  // 非同期でワーカーの読み込みを確認
-  setTimeout(checkWorkerLoaded, 1000);
-}, []);
+  // PDF.jsのワーカー設定
+  useEffect(() => {
+    // CDNの読み込みを確認するログ
+    console.log('PDF.js version:', pdfjsLib.version);
+    
+    // CDNのURLを明示的に指定
+    const workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    console.log('Worker URL:', workerSrc);
+    
+    // ワーカーの読み込みを設定
+    pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+  }, []);
   
   // ファイルアップロード時の処理
   const handleFileChange = (e) => {
@@ -80,6 +63,7 @@ useEffect(() => {
       setProcessingStatus('OCRでテキストを抽出中...');
       
       // PDFドキュメントをロード
+      // eslint-disable-next-line no-unused-vars
       const loadingTask = pdfjsLib.getDocument({ data: pdfData });
       const pdf = await loadingTask.promise;
       
@@ -134,28 +118,37 @@ useEffect(() => {
     }
   };
   
-	// 通常のPDFからのテキスト抽出（実際の実装）
-// 通常のPDFからのテキスト抽出（簡略版）
-const extractTextFromPDF = async (pdfData) => {
-  try {
-    setProcessingStatus('PDFからテキストを抽出中...');
-    
-    // デモ用の進行状況シミュレーション（実際のPDF処理に問題がある場合）
-    for (let i = 0; i <= 100; i += 10) {
-      await new Promise(resolve => setTimeout(resolve, 300));
-      setProgress(i);
+  // 通常のPDFからのテキスト抽出（実際の実装）
+  const extractTextFromPDF = async (pdfData) => {
+    try {
+      setProcessingStatus('PDFからテキストを抽出中...');
+      
+      // PDFドキュメントをロード
+      // eslint-disable-next-line no-unused-vars
+      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+      const pdf = await loadingTask.promise;
+      
+      let fullText = '';
+      
+      // 各ページからテキストを抽出
+      for (let i = 1; i <= pdf.numPages; i++) {
+        // 進捗状況を更新
+        setProgress(Math.floor((i / pdf.numPages) * 100));
+        
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(' ');
+        
+        fullText += pageText + '\n\n';
+      }
+      
+      return fullText;
+    } catch (error) {
+      console.error('PDFテキスト抽出エラー:', error);
+      setError('PDFテキスト抽出中にエラーが発生しました');
+      throw error;
     }
-    
-    // PDF処理をシミュレート（実際のPDF処理がうまくいかない場合の代替手段）
-    return "PDFから抽出されたテキストです。\nこれはダミーのテキストです。実際にはPDF.jsを使ってPDFの内容を抽出します。\n問題が解決したら実際のPDF処理に戻してください。";
-  } catch (error) {
-    console.error('PDFテキスト抽出エラー:', error);
-    setError('PDFテキスト抽出中にエラーが発生しました');
-    throw error;
-  }
-};
-	
-	
+  };
   
   // テキストへの変換処理
   const convertToText = async (pdfData) => {
