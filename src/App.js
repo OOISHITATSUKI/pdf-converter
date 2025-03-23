@@ -17,7 +17,7 @@ const PDFConverter = () => {
   
   // PDF.jsのワーカー設定
   useEffect(() => {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
   }, []);
   
   // ファイルアップロード時の処理
@@ -62,7 +62,7 @@ const PDFConverter = () => {
       const totalPages = pdf.numPages;
       
       // Tesseract.jsワーカーを作成
-      const worker = await createWorker('jpn+eng');
+      const worker = await createWorker('eng');
       
       // 各ページを処理
       for (let i = 1; i <= totalPages; i++) {
@@ -404,6 +404,23 @@ const PDFConverter = () => {
           >
             {loading ? '変換中...' : '変換する'}
           </button>
+
+          {/* Google広告用のスペース */}
+          <div className="ads-container">
+            <div className="ad-box">
+              {/* 広告1のコード */}
+              <div id="ad-slot-1" className="ad-slot">
+                <p className="ad-placeholder">広告スペース 1</p>
+              </div>
+            </div>
+            
+            <div className="ad-box">
+              {/* 広告2のコード */}
+              <div id="ad-slot-2" className="ad-slot">
+                <p className="ad-placeholder">広告スペース 2</p>
+              </div>
+            </div>
+          </div>
           
           {loading && (
             <div className="progress-container">

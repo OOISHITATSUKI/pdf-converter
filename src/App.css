@@ -190,3 +190,42 @@ h2 {
     width: 100%;
   }
 }
+
+/* 広告コンテナ - 横並びを強調 */
+.ads-container {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: row; /* 横並びを明示 */
+  justify-content: space-between;
+  gap: 20px;
+}
+
+/* 個別の広告ボックス */
+.ad-box {
+  flex: 1; /* 均等に幅を取る */
+  min-width: 200px; /* 最小幅を少し小さく */
+  aspect-ratio: 1 / 1; /* 正方形を維持 */
+  background-color: #f9f9f9;
+  border: 1px dashed #ccc;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 広告プレースホルダー（実際の広告実装時には不要） */
+.ad-placeholder {
+  color: #aaa;
+  text-align: center;
+}
+
+/* モバイル対応 - 画面幅が狭い場合のみ縦に変更 */
+@media (max-width: 500px) {
+  .ads-container {
+    flex-direction: column; /* 縦方向に変更 */
+  }
+  
+  .ad-box {
+    width: 100%;
+  }
+}
