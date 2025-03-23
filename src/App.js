@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
+import * as pdfjsLib from 'pdfjs-dist';
+import { createWorker } from 'tesseract.js';
 
 import './App.css'; // 標準のスタイルシートを使用
 
@@ -12,6 +14,11 @@ const PDFConverter = () => {
   const [useOcr, setUseOcr] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
   const [pdfPreview, setPdfPreview] = useState(null);
+  
+  // PDF.jsのワーカー設定
+  useEffect(() => {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+  }, []);
   
   // ファイルアップロード時の処理
   const handleFileChange = (e) => {
@@ -42,34 +49,95 @@ const PDFConverter = () => {
     };
   }, [pdfPreview]);
   
-  // OCRを使用したテキスト抽出（デモ版）
+  // OCRを使用したテキスト抽出（実際の実装）
   const extractTextWithOCR = async (pdfData) => {
-    // 実際のアプリケーションではTesseract.jsなどのOCRライブラリを使用
-    setProcessingStatus('OCRでテキストを抽出中...');
-    
-    // OCR処理の進行状況をシミュレート
-    for (let i = 0; i <= 100; i += 10) {
-      await new Promise(resolve => setTimeout(resolve, 200));
-      setProgress(i);
+    try {
+      setProcessingStatus('OCRでテキストを抽出中...');
+      
+      // PDFドキュメントをロード
+      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+      const pdf = await loadingTask.promise;
+      
+      let fullText = '';
+      const totalPages = pdf.numPages;
+      
+      // Tesseract.jsワーカーを作成
+      const worker = await createWorker('jpn+eng');
+      
+      // 各ページを処理
+      for (let i = 1; i <= totalPages; i++) {
+        // 進捗状況の更新（OCRはページごとに20%ずつ進行）
+        const pageProgressBase = ((i - 1) / totalPages) * 100;
+        setProgress(Math.floor(pageProgressBase));
+        setProcessingStatus(`OCR処理中: ${i}/${totalPages}ページ...`);
+        
+        // ページをレンダリング
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1.5 }); // 高解像度でレンダリング
+        
+        // キャンバス要素の作成
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        
+        // ページをキャンバスにレンダリング
+        await page.render({
+          canvasContext: context,
+          viewport: viewport
+        }).promise;
+        
+        // キャンバスからデータURLを取得
+        const dataUrl = canvas.toDataURL('image/png');
+        
+        // OCRでテキスト認識
+        const { data } = await worker.recognize(dataUrl);
+        fullText += data.text + '\n\n';
+        
+        // 各ページ完了後の進捗更新
+        setProgress(Math.floor(pageProgressBase + (1 / totalPages) * 50));
+      }
+      
+      // ワーカーを終了
+      await worker.terminate();
+      
+      return fullText;
+    } catch (error) {
+      console.error('OCR抽出エラー:', error);
+      setError('OCR処理中にエラーが発生しました');
+      throw error;
     }
-    
-    // OCR結果のサンプル（実際のアプリケーションではOCRエンジンからの結果を使用）
-    return "OCRで抽出されたテキストです。\nこれはスキャンされたPDFや画像化されたPDFからテキストを抽出できます。\n表やグラフなどの構造化データも認識できます。";
   };
   
-  // 通常のPDFからのテキスト抽出（デモ版）
+  // 通常のPDFからのテキスト抽出（実際の実装）
   const extractTextFromPDF = async (pdfData) => {
-    // 実際のアプリケーションではPDF.jsなどのライブラリを使用
-    setProcessingStatus('PDFからテキストを抽出中...');
-    
-    // 処理の進行状況をシミュレート
-    for (let i = 0; i <= 100; i += 20) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      setProgress(i);
+    try {
+      setProcessingStatus('PDFからテキストを抽出中...');
+      
+      // PDFドキュメントをロード
+      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+      const pdf = await loadingTask.promise;
+      
+      let fullText = '';
+      
+      // 各ページからテキストを抽出
+      for (let i = 1; i <= pdf.numPages; i++) {
+        // 進捗状況を更新
+        setProgress(Math.floor((i / pdf.numPages) * 100));
+        
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(' ');
+        
+        fullText += pageText + '\n\n';
+      }
+      
+      return fullText;
+    } catch (error) {
+      console.error('PDFテキスト抽出エラー:', error);
+      setError('PDFテキスト抽出中にエラーが発生しました');
+      throw error;
     }
-    
-    // PDF処理結果のサンプル
-    return "PDFから抽出されたテキストです。\nこれはテキスト埋め込み型PDFからの抽出例です。\n実際のアプリケーションではPDF.jsなどのライブラリを使用してください。";
   };
   
   // テキストへの変換処理
