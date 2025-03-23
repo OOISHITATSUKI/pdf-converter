@@ -133,8 +133,10 @@ const PDFConverter = () => {
 
   return (
     <div className="app-container">
-      {/* UIはそのまま保持 */}
-      {/* 省略 */}
+      <input type="file" accept=".pdf" onChange={handleFileChange} />
+      <button onClick={handleConvert} disabled={loading}>{loading ? '変換中...' : '変換する'}</button>
+      {error && <div className="error-message">{error}</div>}
+      {processingStatus && <p>{processingStatus} ({progress}%)</p>}
     </div>
   );
 };
