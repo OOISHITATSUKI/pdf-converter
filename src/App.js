@@ -292,63 +292,56 @@ const PDFConverter = () => {
     }
   };
   
-  // 変換処理の実行
-  const handleConvert = async () => {
-    if (!file) {
-      setError('ファイルを選択してください');
-      return;
-    }
-    
-    setLoading(true);
-    setError('');
-    setProgress(0);
-    
-    try {
-      // セキュリティメッセージを表示
-      setProcessingStatus('ファイルを処理中...すべての処理はブラウザ内で実行され、データはサーバーに送信されません。');
-      
-      // ファイルを読み込む
+	// 変換処理の実行
+	const handleConvert = async () => {
+  if (!file) {
+    setError('ファイルを選択してください');
+    return;
+  }
+
+  setLoading(true);
+  setError('');
+  setProgress(0);
+  setProcessingStatus('ファイルを処理中...すべての処理はブラウザ内で実行され、データはサーバーに送信されません。');
+
+  try {
+    const pdfData = await new Promise((resolve, reject) => {
       const fileReader = new FileReader();
-      
-      fileReader.onload = async (e) => {
-        const pdfData = e.target.result;
-        let success = false;
-        
-        // 選択された変換タイプに基づいて処理
-        switch (conversionType) {
-          case 'text':
-            success = await convertToText(pdfData);
-            break;
-          case 'excel':
-            success = await convertToExcel(pdfData);
-            break;
-          case 'word':
-            success = await convertToWord(pdfData);
-            break;
-          default:
-            setError('不正な変換タイプです');
-        }
-        
-        if (success) {
-          setProgress(100);
-        }
-        
-        setLoading(false);
-      };
-      
-      fileReader.onerror = () => {
-        setError('ファイル読み込みエラー');
-        setLoading(false);
-      };
-      
+
+      fileReader.onload = (e) => resolve(e.target.result);
+      fileReader.onerror = () => reject('ファイル読み込みエラー');
+
       fileReader.readAsArrayBuffer(file);
-      
-    } catch (err) {
-      console.error('変換エラー:', err);
-      setError('変換処理中にエラーが発生しました');
-      setLoading(false);
+    });
+
+    let success = false;
+
+    switch (conversionType) {
+      case 'text':
+        success = await convertToText(pdfData);
+        break;
+      case 'excel':
+        success = await convertToExcel(pdfData);
+        break;
+      case 'word':
+        success = await convertToWord(pdfData);
+        break;
+      default:
+        setError('不正な変換タイプです');
     }
-  };
+
+    if (success) {
+      setProgress(100);
+      setProcessingStatus('変換完了。ファイルは自動的にダウンロードされました。');
+    }
+  } catch (err) {
+    console.error('変換エラー:', err);
+    setError(typeof err === 'string' ? err : '変換処理中にエラーが発生しました');
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   return (
     <div className="app-container">
