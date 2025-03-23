@@ -109,36 +109,56 @@ const PDFConverter = () => {
     }
   };
   
-  // 通常のPDFからのテキスト抽出（実際の実装）
-  const extractTextFromPDF = async (pdfData) => {
+	// 通常のPDFからのテキスト抽出（実際の実装）
+	const extractTextFromPDF = async (pdfData) => {
+  try {
+    console.log('PDF抽出開始:', pdfData.byteLength, 'バイト');
+    setProcessingStatus('PDFからテキストを抽出中...');
+    
+    // PDFドキュメントをロード
+    console.log('PDFドキュメントの読み込み開始...');
+    const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+    console.log('loadingTask作成完了');
+    
+    // ここでの待機時間が長いようであれば、以下の処理を同期的に実行
     try {
-      setProcessingStatus('PDFからテキストを抽出中...');
-      
-      // PDFドキュメントをロード
-      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+      console.log('PDF読み込み待機中...');
       const pdf = await loadingTask.promise;
+      console.log('PDF読み込み完了:', pdf.numPages, 'ページ');
       
       let fullText = '';
       
       // 各ページからテキストを抽出
       for (let i = 1; i <= pdf.numPages; i++) {
+        console.log(`ページ ${i}/${pdf.numPages} 処理中...`);
         // 進捗状況を更新
         setProgress(Math.floor((i / pdf.numPages) * 100));
         
         const page = await pdf.getPage(i);
+        console.log(`ページ ${i} 取得完了`);
         const textContent = await page.getTextContent();
+        console.log(`ページ ${i} テキスト抽出完了`);
         const pageText = textContent.items.map(item => item.str).join(' ');
         
         fullText += pageText + '\n\n';
+        console.log(`ページ ${i} 処理完了`);
       }
       
+      console.log('すべてのページの抽出完了');
       return fullText;
-    } catch (error) {
-      console.error('PDFテキスト抽出エラー:', error);
-      setError('PDFテキスト抽出中にエラーが発生しました');
-      throw error;
+    } catch (err) {
+      console.error('PDF処理中の詳細エラー:', err);
+      throw err;
     }
-  };
+    
+  } catch (error) {
+    console.error('PDFテキスト抽出エラー:', error);
+    setError('PDFテキスト抽出中にエラーが発生しました: ' + error.message);
+    throw error;
+  }
+	};
+	
+	
   
   // テキストへの変換処理
   const convertToText = async (pdfData) => {
