@@ -14,67 +14,142 @@ const PDFConverter = () => {
   const [useOcr, setUseOcr] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
   const [pdfPreview, setPdfPreview] = useState(null);
-
+  
+  // PDF.jsのワーカー設定
   useEffect(() => {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    console.log('PDF.js version:', pdfjsLib.version);
+    const workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    console.log('Setting worker src to:', workerSrc);
+    pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
   }, []);
+  
+  // コンポーネントのアンマウント時にリソースを解放
+  useEffect(() => {
+    return () => {
+      if (pdfPreview) {
+        URL.revokeObjectURL(pdfPreview);
+      }
+    };
+  }, [pdfPreview]);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
     if (selectedFile && selectedFile.type === 'application/pdf') {
+      console.log('PDF file selected:', selectedFile.name);
       setFile(selectedFile);
-      setPdfPreview(URL.createObjectURL(selectedFile));
-      setProcessingStatus('ファイルはブラウザ内で処理されます。');
+      
+      // ファイルプレビューの作成
+      const fileUrl = URL.createObjectURL(selectedFile);
+      setPdfPreview(fileUrl);
+      
+      setProcessingStatus('ファイルはブラウザ内で処理され、サーバーにアップロードされません。');
       setError('');
-    } else {
+    } else if (selectedFile) {
       setFile(null);
       setPdfPreview(null);
-      setError('PDFファイルのみ対応しています。');
+      setError('PDFファイルのみ対応しています。別の形式のファイルが選択されました。');
     }
   };
 
   const extractTextWithOCR = async (pdfData) => {
-    setProcessingStatus('OCRでテキストを抽出中...');
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfData) }).promise;
-
-    const worker = await createWorker({ logger: m => setProgress(Math.floor(m.progress * 100)) });
-    await worker.loadLanguage('jpn+eng');
-    await worker.initialize('jpn+eng');
-
-    let fullText = '';
-    for (let i = 1; i <= pdf.numPages; i++) {
-      setProcessingStatus(`OCR処理中: ${i}/${pdf.numPages}ページ`);
-
-      const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 2.0 });
-      const canvas = document.createElement('canvas');
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-
-      const { data: { text } } = await worker.recognize(canvas);
-      fullText += text + '\n\n';
-      setProgress(Math.floor((i / pdf.numPages) * 100));
+    try {
+      console.log('Starting OCR extraction...');
+      setProcessingStatus('OCRでテキストを抽出中...');
+      
+      // PDFドキュメントをロード
+      console.log('Loading PDF document for OCR...');
+      const pdf = await pdfjsLib.getDocument(new Uint8Array(pdfData)).promise;
+      console.log('PDF loaded, pages:', pdf.numPages);
+      
+      let fullText = '';
+      
+      // Tesseract.jsワーカーを作成
+      console.log('Initializing Tesseract worker...');
+      const worker = await createWorker('eng');
+      console.log('Tesseract worker initialized');
+      
+      // 各ページを処理
+      for (let i = 1; i <= pdf.numPages; i++) {
+        console.log(`Processing page ${i}/${pdf.numPages}`);
+        const pageProgressBase = ((i - 1) / pdf.numPages) * 100;
+        setProgress(Math.floor(pageProgressBase));
+        setProcessingStatus(`OCR処理中: ${i}/${pdf.numPages}ページ...`);
+        
+        // ページをレンダリング
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1.5 }); // 高解像度でレンダリング
+        
+        // キャンバス要素の作成
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        
+        // ページをキャンバスにレンダリング
+        console.log('Rendering page to canvas...');
+        await page.render({
+          canvasContext: context,
+          viewport: viewport
+        }).promise;
+        
+        // キャンバスからデータURLを取得
+        const dataUrl = canvas.toDataURL('image/png');
+        
+        // OCRでテキスト認識
+        console.log('Running OCR on page image...');
+        const { data } = await worker.recognize(dataUrl);
+        console.log('OCR completed for page');
+        fullText += data.text + '\n\n';
+        
+        // 各ページ完了後の進捗更新
+        setProgress(Math.floor(pageProgressBase + (1 / pdf.numPages) * 100));
+      }
+      
+      // ワーカーを終了
+      console.log('Terminating Tesseract worker...');
+      await worker.terminate();
+      console.log('OCR extraction completed');
+      
+      return fullText;
+    } catch (error) {
+      console.error('OCR抽出エラー:', error);
+      setError('OCR処理中にエラーが発生しました: ' + error.message);
+      throw error;
     }
-
-    await worker.terminate();
-    return fullText;
   };
 
   const extractTextFromPDF = async (pdfData) => {
-    setProcessingStatus('PDFからテキストを抽出中...');
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfData) }).promise;
-    let fullText = '';
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-      setProcessingStatus(`テキスト抽出中: ${i}/${pdf.numPages}ページ`);
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      fullText += textContent.items.map(item => item.str).join(' ') + '\n\n';
-      setProgress(Math.floor((i / pdf.numPages) * 100));
+    try {
+      console.log('Starting text extraction from PDF...');
+      setProcessingStatus('PDFからテキストを抽出中...');
+      
+      // PDFドキュメントをロード
+      console.log('Loading PDF document...');
+      const pdf = await pdfjsLib.getDocument(new Uint8Array(pdfData)).promise;
+      console.log('PDF loaded, pages:', pdf.numPages);
+      
+      let fullText = '';
+      
+      // 各ページからテキストを抽出
+      for (let i = 1; i <= pdf.numPages; i++) {
+        console.log(`Extracting text from page ${i}/${pdf.numPages}`);
+        setProgress(Math.floor((i / pdf.numPages) * 100));
+        setProcessingStatus(`テキスト抽出中: ${i}/${pdf.numPages}ページ`);
+        
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(' ');
+        
+        fullText += pageText + '\n\n';
+      }
+      
+      console.log('Text extraction completed');
+      return fullText;
+    } catch (error) {
+      console.error('PDFテキスト抽出エラー:', error);
+      setError('PDFテキスト抽出中にエラーが発生しました: ' + error.message);
+      throw error;
     }
-
-    return fullText;
   };
 
   const handleConvert = async () => {
@@ -82,50 +157,110 @@ const PDFConverter = () => {
       setError('ファイルを選択してください');
       return;
     }
-
+    
     setLoading(true);
-    setProgress(0);
-    setProcessingStatus('ファイルを処理中です。');
     setError('');
-
+    setProgress(0);
+    console.log('Starting conversion process...');
+    
     try {
+      // ファイルをArrayBufferとして読み込む
+      console.log('Reading file as ArrayBuffer...');
       const pdfData = await file.arrayBuffer();
-      const extractedText = useOcr ? await extractTextWithOCR(pdfData) : await extractTextFromPDF(pdfData);
-
+      console.log('File read, size:', pdfData.byteLength, 'bytes');
+      
+      // テキスト抽出
+      let extractedText;
+      if (useOcr) {
+        extractedText = await extractTextWithOCR(pdfData);
+      } else {
+        extractedText = await extractTextFromPDF(pdfData);
+      }
+      console.log('Text extraction completed, length:', extractedText.length);
+      
+      // 選択された形式に変換
       let blob, extension;
       switch (conversionType) {
         case 'text':
+          console.log('Converting to text format...');
           blob = new Blob([extractedText], { type: 'text/plain;charset=utf-8' });
           extension = 'txt';
           break;
+          
         case 'excel':
-          const rows = extractedText.split('\n').map(line => line.split(/\t+|\s{2,}/));
+          console.log('Converting to Excel format...');
+          // テキストを行に分割
+          const lines = extractedText.split('\n').filter(line => line.trim() !== '');
+          
+          // 行をセルに分割
+          const data = lines.map(line => {
+            // タブ区切りか、複数スペース区切りでセルを分割
+            const cells = line.split(/\t+|\s{2,}/);
+            return cells;
+          });
+          
+          // ワークブックとワークシートを作成
           const wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Sheet1');
-          blob = new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+          const ws = XLSX.utils.aoa_to_sheet(data);
+          XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+          
+          // Excelファイルとして保存
+          const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+          blob = new Blob([excelBuffer], { 
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+          });
           extension = 'xlsx';
           break;
+          
         case 'word':
-          const html = extractedText.split('\n').map(p => `<p>${p}</p>`).join('');
-          blob = new Blob([`<html><body>${html}</body></html>`], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+          console.log('Converting to Word format...');
+          // HTMLに変換
+          const html = `<!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <title>${file.name.replace('.pdf', '')}</title>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.5; }
+              p { margin-bottom: 0.8em; }
+            </style>
+          </head>
+          <body>
+            ${extractedText.split('\n').map(line => line.trim() ? `<p>${line}</p>` : '').join('')}
+          </body>
+          </html>`;
+          
+          blob = new Blob([html], { 
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
+          });
           extension = 'docx';
           break;
+          
         default:
-          throw new Error('無効な変換タイプ');
+          throw new Error('不正な変換タイプです');
       }
-
+      
+      // ファイルのダウンロード
+      console.log('Creating download for converted file...');
       const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${file.name.replace('.pdf', '')}.${extension}`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-
-      setProcessingStatus('変換が完了しました。');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${file.name.replace('.pdf', '')}.${extension}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      
+      // リソースの解放
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        setProcessingStatus('変換完了。ファイルは自動的にダウンロードされました。');
+        console.log('Conversion process completed successfully');
+      }, 100);
+      
+      setProgress(100);
     } catch (err) {
-      setError('変換エラー: ' + err.message);
+      console.error('変換エラー:', err);
+      setError('変換処理中にエラーが発生しました: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -133,19 +268,113 @@ const PDFConverter = () => {
 
   return (
     <div className="app-container">
-      <input type="file" accept=".pdf" onChange={handleFileChange} />
-      <div>
-        <button onClick={() => setConversionType('text')}>テキスト</button>
-        <button onClick={() => setConversionType('excel')}>Excel</button>
-        <button onClick={() => setConversionType('word')}>Word</button>
+      <header className="app-header">
+        <h1>PDF変換ツール</h1>
+        <p>PDFファイルをテキスト、Excel、Word形式に変換できます。すべての処理はブラウザ内で行われます。</p>
+      </header>
+
+      <div className="app-content">
+        <div className="control-panel">
+          <h2>変換設定</h2>
+          
+          <div className="conversion-type">
+            <label>変換形式を選択:</label>
+            <div className="type-buttons">
+              <button 
+                className={conversionType === 'text' ? 'active' : ''} 
+                onClick={() => setConversionType('text')}
+              >
+                テキスト
+              </button>
+              <button 
+                className={conversionType === 'excel' ? 'active' : ''} 
+                onClick={() => setConversionType('excel')}
+              >
+                Excel
+              </button>
+              <button 
+                className={conversionType === 'word' ? 'active' : ''} 
+                onClick={() => setConversionType('word')}
+              >
+                Word
+              </button>
+            </div>
+          </div>
+          
+          <div className="ocr-option">
+            <label>
+              <input
+                type="checkbox"
+                checked={useOcr}
+                onChange={() => setUseOcr(!useOcr)}
+              />
+              OCRを使用する (スキャンされたPDFや画像を含むPDF)
+            </label>
+          </div>
+          
+          <div className="file-upload">
+            <label>PDFファイルを選択:</label>
+            <input
+              type="file"
+              accept=".pdf"
+              onChange={handleFileChange}
+            />
+          </div>
+          
+          {error && <div className="error-message">{error}</div>}
+          
+          <button
+            className="convert-button"
+            onClick={handleConvert}
+            disabled={!file || loading}
+          >
+            {loading ? '変換中...' : '変換する'}
+          </button>
+
+          {/* Google広告用のスペース */}
+          <div className="ads-container">
+            <div className="ad-box">
+              <div id="ad-slot-1" className="ad-slot">
+                <p className="ad-placeholder">広告スペース 1</p>
+              </div>
+            </div>
+            
+            <div className="ad-box">
+              <div id="ad-slot-2" className="ad-slot">
+                <p className="ad-placeholder">広告スペース 2</p>
+              </div>
+            </div>
+          </div>
+          
+          {loading && (
+            <div className="progress-container">
+              <div className="progress-bar">
+                <div className="progress" style={{ width: `${progress}%` }}></div>
+              </div>
+              <p>{processingStatus} ({progress}%)</p>
+            </div>
+          )}
+          
+          {!loading && processingStatus && (
+            <p className="status-message">{processingStatus}</p>
+          )}
+        </div>
+        
+        <div className="preview-panel">
+          <h2>プレビュー</h2>
+          {pdfPreview ? (
+            <iframe src={pdfPreview} title="PDF Preview"></iframe>
+          ) : (
+            <div className="preview-placeholder">
+              <p>PDFファイルをアップロードするとここにプレビューが表示されます</p>
+            </div>
+          )}
+        </div>
       </div>
-      <label>
-        <input type="checkbox" checked={useOcr} onChange={(e) => setUseOcr(e.target.checked)} /> OCRを使用する
-      </label>
-      <button onClick={handleConvert} disabled={loading}>{loading ? '変換中...' : '変換する'}</button>
-      {pdfPreview && <iframe src={pdfPreview} width="100%" height="400px"></iframe>}
-      {error && <div className="error-message">{error}</div>}
-      {processingStatus && <p>{processingStatus} ({progress}%)</p>}
+      
+      <footer className="app-footer">
+        <p>© {new Date().getFullYear()} PDF変換ツール - プライバシーを重視した無料のオンラインPDF変換サービス</p>
+      </footer>
     </div>
   );
 };
