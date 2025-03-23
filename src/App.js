@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import * as mammoth from 'mammoth';
 
 import './App.css'; // 標準のスタイルシートを使用
 
