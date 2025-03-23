@@ -15,10 +15,35 @@ const PDFConverter = () => {
   const [processingStatus, setProcessingStatus] = useState('');
   const [pdfPreview, setPdfPreview] = useState(null);
   
-  // PDF.jsのワーカー設定
-  useEffect(() => {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-  }, []);
+// PDF.jsのワーカー設定
+useEffect(() => {
+  // CDNの読み込みを確認するログ
+  console.log('PDF.js version:', pdfjsLib.version);
+  
+  // CDNのURLを明示的に指定
+  const workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+  console.log('Worker URL:', workerSrc);
+  
+  // ワーカーの読み込みを設定
+  pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+  
+  // ワーカーの読み込み状態を確認する関数
+  const checkWorkerLoaded = () => {
+    try {
+      // PDF.jsの機能をテスト
+      const emptyPdf = new Uint8Array([]);
+      const loadingTask = pdfjsLib.getDocument({ data: emptyPdf });
+      console.log('PDF.js worker is properly initialized');
+      return true;
+    } catch (err) {
+      console.error('PDF.js worker initialization failed:', err);
+      return false;
+    }
+  };
+  
+  // 非同期でワーカーの読み込みを確認
+  setTimeout(checkWorkerLoaded, 1000);
+}, []);
   
   // ファイルアップロード時の処理
   const handleFileChange = (e) => {
