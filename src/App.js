@@ -12,13 +12,15 @@ const PDFConverter = () => {
   const [processingStatus, setProcessingStatus] = useState('');
   const [pdfPreview, setPdfPreview] = useState(null);
   
-  // PDF.jsのワーカー設定
-  useEffect(() => {
-    const pdfjsWorker = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
-    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
-    console.log('Set PDF.js worker to:', pdfjsWorker);
-  }, []);
-  
+	// PDF.jsのワーカー設定
+	useEffect(() => {
+  // pdfjs-distのバージョンを取得して同じバージョンのワーカーを指定
+  const pdfVersion = pdfjsLib.version;
+  const pdfjsWorker = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfVersion}/pdf.worker.min.js`;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+  console.log('Set PDF.js worker to:', pdfjsWorker, 'PDF.js version:', pdfVersion);
+}, []);
+	
   // コンポーネントのアンマウント時にリソースを解放
   useEffect(() => {
     return () => {
