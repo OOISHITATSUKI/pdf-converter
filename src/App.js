@@ -796,6 +796,6 @@ const PDFConverter = () => {
             </div>
           )}
           
-          {!loading && processingStatus && (
-            <p className="status-message">{processingStatus}</p>
-          )}
+         {!loading && processingStatus && (
+  <p className="status-message">{processingStatus}</p>
+)}
