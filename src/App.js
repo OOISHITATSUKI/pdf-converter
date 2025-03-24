@@ -47,39 +47,108 @@ const PDFConverter = () => {
     }
   };
   
-  // PDFからの表構造抽出（シミュレーション版）
+  // PDFからの表構造抽出（実際の実装）
   const extractTablesFromPDF = async (pdfData) => {
     try {
-      console.log('Starting table extraction simulation...');
+      console.log('Starting actual PDF table extraction...');
       setProcessingStatus('PDFから表データを抽出中...');
       
-      // 進行状況をシミュレート
-      for (let i = 0; i <= 100; i += 10) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-        setProgress(i);
+      // PDFドキュメントをロード
+      const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+      console.log(`PDF loaded, pages: ${pdf.numPages}`);
+      
+      let allTableData = [];
+      
+      // ヘッダー行を追加
+      allTableData.push([`ファイル「${file.name}」から抽出されたデータ`]);
+      allTableData.push([`総ページ数: ${pdf.numPages}`]);
+      allTableData.push([]);
+      
+      // 各ページから表構造を抽出
+      for (let i = 1; i <= pdf.numPages; i++) {
+        setProgress(Math.floor((i / pdf.numPages) * 100));
+        setProcessingStatus(`表データ抽出中: ${i}/${pdf.numPages}ページ`);
+        
+        try {
+          const page = await pdf.getPage(i);
+          
+          // ページ情報を追加
+          allTableData.push([`--- ページ ${i} ---`]);
+          
+          const textContent = await page.getTextContent();
+          
+          // テキスト項目を位置情報付きで取得
+          const textItems = textContent.items.map(item => ({
+            text: item.str,
+            x: Math.round(item.transform[4]),
+            y: Math.round(item.transform[5]),
+            height: Math.round(item.height),
+            width: Math.round(item.width)
+          }));
+          
+          if (textItems.length === 0) {
+            allTableData.push(["このページにはテキストが含まれていません"]);
+            continue;
+          }
+          
+          // Y座標でグループ化して行を形成（同じ行にあるテキストアイテムをグループ化）
+          const rows = {};
+          const yTolerance = 5; // 同じ行と見なす高さの許容差
+          
+          textItems.forEach(item => {
+            // 空のテキストはスキップ
+            if (!item.text.trim()) return;
+            
+            // 近似Y座標を計算して同じ行のアイテムをグループ化
+            const roundedY = Math.round(item.y / yTolerance) * yTolerance;
+            if (!rows[roundedY]) {
+              rows[roundedY] = [];
+            }
+            rows[roundedY].push(item);
+          });
+          
+          // Y座標でソートして行順を維持
+          const sortedYCoordinates = Object.keys(rows).sort((a, b) => b - a); // 降順（PDFは下から上に座標が増える）
+          
+          // 各行をX座標でソートして列順を維持し、テーブルデータに追加
+          for (const y of sortedYCoordinates) {
+            rows[y].sort((a, b) => a.x - b.x);
+            
+            // テキストのみの配列に変換
+            const rowTexts = rows[y].map(item => item.text.trim()).filter(text => text.length > 0);
+            if (rowTexts.length > 0) {
+              allTableData.push(rowTexts);
+            }
+          }
+          
+          // ページ区切り
+          if (i < pdf.numPages) {
+            allTableData.push([]);
+          }
+          
+        } catch (pageError) {
+          console.error(`Error extracting from page ${i}:`, pageError);
+          allTableData.push([`[ページ ${i} の抽出中にエラーが発生しました]`]);
+        }
       }
       
-      // ファイル名を取得
-      const fileName = file ? file.name : 'document.pdf';
+      // 変換情報を追加
+      allTableData.push([]);
+      allTableData.push(["PDF変換情報"]);
+      allTableData.push(["変換日時", new Date().toLocaleString()]);
+      allTableData.push(["ファイルサイズ", `${Math.round(pdfData.byteLength / 1024)} KB`]);
       
-      // サンプルデータを返す
-      return [
-        [`ファイル「${fileName}」から抽出されたデータ`],
-        [],
-        ["項目", "数量", "単価", "金額"],
-        ["商品A", "2", "1,000円", "2,000円"],
-        ["商品B", "1", "3,000円", "3,000円"],
-        ["商品C", "3", "500円", "1,500円"],
-        ["合計", "", "", "6,500円"],
-        [],
-        ["注記", "このデータはシミュレーションによるもので、実際のPDFの内容は反映されていません。"],
-        ["PDF変換日時", new Date().toLocaleString()],
-        ["ファイルサイズ", file ? `${Math.round(file.size / 1024)} KB` : "不明"]
-      ];
+      return allTableData;
     } catch (error) {
-      console.error('表データ抽出エラー:', error);
-      setError('表データ抽出中にエラーが発生しました');
-      throw error;
+      console.error('PDF表抽出エラー:', error);
+      
+      // エラーが発生した場合はエラーメッセージを含むデータを返す
+      return [
+        ["PDF抽出エラーが発生しました"],
+        ["エラー内容", error.message || String(error)],
+        ["ファイル名", file ? file.name : "不明"],
+        ["変換日時", new Date().toLocaleString()]
+      ];
     }
   };
 
