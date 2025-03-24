@@ -19,66 +19,70 @@ const PDFConverter = () => {
   
   const fileInputRef = useRef(null);
   
-  // PDF.jsのワーカー設定 - 複数の方法を試みる
-  useEffect(() => {
-    const setupWorker = async () => {
+// PDF.jsのワーカー設定 - 複数の方法を試みる
+useEffect(() => {
+  const setupWorker = async () => {
+    try {
+      // 方法1: 既知の安定バージョンを使用
+      const pdfjsWorker = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.worker.min.js';
+      pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+      console.log('Set PDF.js worker to fixed version:', pdfjsWorker);
+      
+      // ワーカーの初期化を確認
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      setWorkerReady(true);
+    } catch (err) {
+      console.error('Worker setup failed with fixed version:', err);
+      
       try {
-        // 方法1: 既知の安定バージョンを使用
-        const pdfjsWorker = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.worker.min.js';
-        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
-        console.log('Set PDF.js worker to fixed version:', pdfjsWorker);
+        // 方法2: フォールバックとしてインラインワーカーを使用
+        const blob = new Blob([
+          `importScripts('https://unpkg.com/pdfjs-dist@2.14.305/build/pdf.worker.min.js');`
+        ], { type: 'application/javascript' });
+        
+        const workerUrl = URL.createObjectURL(blob);
+        pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+        console.log('Using inline worker blob URL');
         
         // ワーカーの初期化を確認
         await new Promise(resolve => setTimeout(resolve, 1000));
         setWorkerReady(true);
-      } catch (err) {
-        console.error('Worker setup failed with fixed version:', err);
+      } catch (inlineErr) {
+        console.error('Inline worker setup failed:', inlineErr);
         
-        try {
-          // 方法2: フォールバックとしてインラインワーカーを使用
-          const blob = new Blob([
-            `importScripts('https://unpkg.com/pdfjs-dist@2.14.305/build/pdf.worker.min.js');`
-          ], { type: 'application/javascript' });
-          
-          const workerUrl = URL.createObjectURL(blob);
-          pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
-          console.log('Using inline worker blob URL');
-          
-          // ワーカーの初期化を確認
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          setWorkerReady(true);
-        } catch (inlineErr) {
-          console.error('Inline worker setup failed:', inlineErr);
-          
-          // 方法3: ワーカーなしモード（限定機能）
-          pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-          console.log('Falling back to workerless mode');
-          setWorkerReady(true);
-        }
-      }
-    };
-    
-    setupWorker();
-    
-    // ワーカー設定のステータスチェック
-    const checkWorkerStatus = setTimeout(() => {
-      if (!workerReady) {
-        console.warn('Worker setup taking too long, enabling UI anyway');
+        // 方法3: ワーカーなしモード（限定機能）
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+        console.log('Falling back to workerless mode');
         setWorkerReady(true);
       }
-    }, 5000); // 5秒後にタイムアウト
-    
-    return () => {
-      clearTimeout(checkWorkerStatus);
-      // リソースの解放
-      if (pdfPreview) {
-        URL.revokeObjectURL(pdfPreview);
-      }
-      if (lastExcelUrl) {
-        URL.revokeObjectURL(lastExcelUrl);
-      }
-    };
-  }, []);
+    }
+  };
+  
+  setupWorker();
+  
+  // ワーカー設定のステータスチェック
+  const checkWorkerStatus = setTimeout(() => {
+    if (!workerReady) {
+      console.warn('Worker setup taking too long, enabling UI anyway');
+      setWorkerReady(true);
+    }
+  }, 5000); // 5秒後にタイムアウト
+  
+  return () => {
+    clearTimeout(checkWorkerStatus);
+    // リソースの解放
+    if (pdfPreview) {
+      URL.revokeObjectURL(pdfPreview);
+    }
+    if (lastExcelUrl) {
+      URL.revokeObjectURL(lastExcelUrl);
+    }
+  };
+	}, [pdfPreview, lastExcelUrl, workerReady]); 
+	
+	// ここに依存配列の変数を追加
+	
+	
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files?.[0] || null;
