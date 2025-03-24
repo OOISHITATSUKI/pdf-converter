@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
+import { FileText, Download, AlertCircle, CheckCircle, Loader, Info } from 'lucide-react';
 
 import './App.css'; // スタイルシート
 
@@ -12,6 +13,11 @@ const PDFConverter = () => {
   const [processingStatus, setProcessingStatus] = useState('');
   const [pdfPreview, setPdfPreview] = useState(null);
   const [workerReady, setWorkerReady] = useState(false);
+  const [conversionSuccess, setConversionSuccess] = useState(false);
+  const [showSupportedInfo, setShowSupportedInfo] = useState(false);
+  const [lastExcelUrl, setLastExcelUrl] = useState(null);
+  
+  const fileInputRef = useRef(null);
   
   // PDF.jsのワーカー設定 - 複数の方法を試みる
   useEffect(() => {
@@ -53,19 +59,36 @@ const PDFConverter = () => {
     };
     
     setupWorker();
-  }, []);
-  
-  // コンポーネントのアンマウント時にリソースを解放
-  useEffect(() => {
+    
+    // ワーカー設定のステータスチェック
+    const checkWorkerStatus = setTimeout(() => {
+      if (!workerReady) {
+        console.warn('Worker setup taking too long, enabling UI anyway');
+        setWorkerReady(true);
+      }
+    }, 5000); // 5秒後にタイムアウト
+    
     return () => {
+      clearTimeout(checkWorkerStatus);
+      // リソースの解放
       if (pdfPreview) {
         URL.revokeObjectURL(pdfPreview);
       }
+      if (lastExcelUrl) {
+        URL.revokeObjectURL(lastExcelUrl);
+      }
     };
-  }, [pdfPreview]);
+  }, []);
 
   const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0];
+    const selectedFile = e.target.files?.[0] || null;
+    
+    // 以前のファイルに関するリソースを解放
+    if (pdfPreview) {
+      URL.revokeObjectURL(pdfPreview);
+      setPdfPreview(null);
+    }
+    
     if (selectedFile && selectedFile.type === 'application/pdf') {
       console.log('PDF file selected:', selectedFile.name);
       setFile(selectedFile);
@@ -76,11 +99,42 @@ const PDFConverter = () => {
       
       setProcessingStatus('ファイルはブラウザ内で処理され、サーバーにアップロードされません。');
       setError('');
+      setConversionSuccess(false);
     } else if (selectedFile) {
       setFile(null);
       setPdfPreview(null);
       setError('PDFファイルのみ対応しています。別の形式のファイルが選択されました。');
     }
+  };
+  
+  // 同じ行と見なすY座標の許容差を動的に計算
+  const calculateYTolerance = (textItems) => {
+    if (!textItems || textItems.length < 10) return 5; // デフォルト値
+    
+    // Y座標の差分を収集
+    const yDiffs = [];
+    const sortedItems = [...textItems].sort((a, b) => a.y - b.y);
+    
+    for (let i = 1; i < sortedItems.length; i++) {
+      const diff = Math.abs(sortedItems[i].y - sortedItems[i-1].y);
+      if (diff > 0 && diff < 20) { // 極端な値を除外
+        yDiffs.push(diff);
+      }
+    }
+    
+    if (yDiffs.length === 0) return 5;
+    
+    // 最も頻繁に見られる差分を特定（行間隔の推定）
+    const diffCounts = {};
+    yDiffs.forEach(diff => {
+      const roundedDiff = Math.round(diff);
+      diffCounts[roundedDiff] = (diffCounts[roundedDiff] || 0) + 1;
+    });
+    
+    const mostCommonDiff = Object.entries(diffCounts)
+      .sort((a, b) => b[1] - a[1])[0][0];
+    
+    return Math.max(3, Math.ceil(parseInt(mostCommonDiff) * 0.3));
   };
   
   // PDFからの表構造抽出（実際の実装を試みる）
@@ -153,7 +207,10 @@ const PDFConverter = () => {
                 return {
                   text: item.str,
                   x: Math.round(item.transform[4] || 0),
-                  y: Math.round(item.transform[5] || 0)
+                  y: Math.round(item.transform[5] || 0),
+                  width: item.width || 0,
+                  height: item.height || 0,
+                  fontName: item.fontName
                 };
               } catch (e) {
                 console.warn('Invalid text item:', e);
@@ -167,9 +224,12 @@ const PDFConverter = () => {
             continue;
           }
           
+          // 動的に行の許容差を計算
+          const yTolerance = calculateYTolerance(textItems);
+          console.log(`Using Y tolerance of ${yTolerance} for page ${i}`);
+          
           // Y座標でグループ化して行を形成
           const rows = {};
-          const yTolerance = 5; // 同じ行と見なす高さの許容差
           
           textItems.forEach(item => {
             if (!item.text.trim()) return;
@@ -185,14 +245,63 @@ const PDFConverter = () => {
           // Y座標でソート（PDFは下から上に座標が増えるため降順）
           const sortedYCoordinates = Object.keys(rows).sort((a, b) => b - a);
           
+          // フォント特性を分析して見出しを検出
+          const detectHeaders = (items) => {
+            // フォントの頻度分析
+            const fontCounts = {};
+            items.forEach(item => {
+              if (item.fontName) {
+                fontCounts[item.fontName] = (fontCounts[item.fontName] || 0) + 1;
+              }
+            });
+            
+            // 最も一般的なフォントを特定
+            const commonFonts = Object.entries(fontCounts)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 2)
+              .map(entry => entry[0]);
+            
+            // 一般的でないフォントを使用しているアイテムを見出しの候補とする
+            return items.some(item => 
+              item.fontName && !commonFonts.includes(item.fontName)
+            );
+          };
+          
+          // 前回の行の列数
+          let lastColumnCount = 0;
+          
           // 各行をX座標でソートして列順を維持し、テーブルデータに追加
           for (const y of sortedYCoordinates) {
             rows[y].sort((a, b) => a.x - b.x);
             
             // テキストのみの配列に変換
             const rowTexts = rows[y].map(item => item.text.trim()).filter(text => text.length > 0);
+            
             if (rowTexts.length > 0) {
+              const isHeader = detectHeaders(rows[y]);
+              
+              // 空行を追加して表の構造を区切る（列数が大きく変わる場合）
+              if (lastColumnCount > 0 && 
+                  rowTexts.length > 1 && 
+                  Math.abs(rowTexts.length - lastColumnCount) > 2) {
+                allTableData.push([]);
+              }
+              
+              // 見出し行の前に空行を挿入
+              if (isHeader && allTableData.length > 0 && 
+                  allTableData[allTableData.length-1].length > 0) {
+                allTableData.push([]);
+              }
+              
+              // データ行の追加
               allTableData.push(rowTexts);
+              
+              // 見出し行の後にも空行を挿入
+              if (isHeader) {
+                allTableData.push([]);
+              }
+              
+              lastColumnCount = rowTexts.length;
             }
           }
           
@@ -260,7 +369,14 @@ const PDFConverter = () => {
     setLoading(true);
     setError('');
     setProgress(0);
+    setConversionSuccess(false);
     console.log('Starting conversion process...');
+    
+    // 以前のExcel URLがあれば解放
+    if (lastExcelUrl) {
+      URL.revokeObjectURL(lastExcelUrl);
+      setLastExcelUrl(null);
+    }
     
     try {
       // ファイルの内容をArrayBufferとして読み込む
@@ -304,6 +420,8 @@ const PDFConverter = () => {
       });
       
       const url = URL.createObjectURL(blob);
+      setLastExcelUrl(url);
+      
       const a = document.createElement('a');
       a.href = url;
       a.download = `${file.name.replace('.pdf', '')}.xlsx`;
@@ -311,20 +429,29 @@ const PDFConverter = () => {
       a.click();
       document.body.removeChild(a);
       
-      // リソースの解放
-      setTimeout(() => {
-        URL.revokeObjectURL(url);
-        setProcessingStatus('変換完了。Excelファイルがダウンロードされました。');
-      }, 100);
-      
       console.log('Conversion process completed successfully');
       setProgress(100);
+      setConversionSuccess(true);
+      setProcessingStatus('変換完了。Excelファイルがダウンロードされました。');
+      
     } catch (err) {
       console.error('変換エラー:', err);
       setError('変換処理中にエラーが発生しました: ' + (err.message || err));
     } finally {
       setLoading(false);
     }
+  };
+  
+  // 変換済みファイルの再ダウンロード
+  const handleRedownload = () => {
+    if (!lastExcelUrl || !file) return;
+    
+    const a = document.createElement('a');
+    a.href = lastExcelUrl;
+    a.download = `${file.name.replace('.pdf', '')}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   return (
@@ -338,24 +465,104 @@ const PDFConverter = () => {
         <div className="control-panel">
           <h2>変換設定</h2>
           
-          <div className="file-upload">
-            <label>PDFファイルを選択:</label>
+          <div className="file-upload-area" 
+               onClick={() => fileInputRef.current.click()}
+               onDrop={(e) => {
+                 e.preventDefault();
+                 e.stopPropagation();
+                 if (e.dataTransfer.files.length > 0) {
+                   const droppedFile = e.dataTransfer.files[0];
+                   if (droppedFile.type === 'application/pdf') {
+                     const input = fileInputRef.current;
+                     const dataTransfer = new DataTransfer();
+                     dataTransfer.items.add(droppedFile);
+                     input.files = dataTransfer.files;
+                     handleFileChange({ target: input });
+                   } else {
+                     setError('PDFファイルのみ対応しています。');
+                   }
+                 }
+               }}
+               onDragOver={(e) => {
+                 e.preventDefault();
+                 e.stopPropagation();
+               }}>
+            <FileText className="file-icon" />
+            <p>クリックまたはドラッグ＆ドロップでPDFファイルを選択</p>
             <input
+              ref={fileInputRef}
               type="file"
-              accept=".pdf"
+              accept=".pdf,application/pdf"
               onChange={handleFileChange}
+              className="hidden-input"
             />
+            {file && (
+              <div className="selected-file">
+                <span className="file-name">{file.name}</span>
+                <span className="file-size">({(file.size / 1024 / 1024).toFixed(2)} MB)</span>
+              </div>
+            )}
           </div>
           
-          {error && <div className="error-message">{error}</div>}
+          {error && <div className="error-message">
+            <AlertCircle className="icon" />
+            <span>{error}</span>
+          </div>}
           
-          <button
-            className="convert-button"
-            onClick={handleConvert}
-            disabled={!file || loading || !workerReady}
-          >
-            {!workerReady ? 'ロード中...' : loading ? '変換中...' : 'Excelに変換する'}
-          </button>
+          {conversionSuccess && (
+            <div className="success-message">
+              <CheckCircle className="icon" />
+              <span>変換に成功しました！Excelファイルをダウンロードしました。</span>
+            </div>
+          )}
+          
+          <div className="action-buttons">
+            <button
+              className="convert-button"
+              onClick={handleConvert}
+              disabled={!file || loading || !workerReady}
+            >
+              {!workerReady ? 'ロード中...' : loading ? '変換中...' : 'Excelに変換する'}
+              {loading && <Loader className="spinner-icon" />}
+            </button>
+            
+            {conversionSuccess && (
+              <button
+                className="download-button"
+                onClick={handleRedownload}
+              >
+                <Download className="icon" />
+                再ダウンロード
+              </button>
+            )}
+          </div>
+          
+          <div className="support-info">
+            <button 
+              className="info-button"
+              onClick={() => setShowSupportedInfo(!showSupportedInfo)}
+            >
+              <Info className="icon" />
+              サポート対象PDFについて
+            </button>
+            
+            {showSupportedInfo && (
+              <div className="info-panel">
+                <h3>対応PDFの種類</h3>
+                <ul>
+                  <li>テキストが含まれるPDF（画像化されたPDFは変換精度が下がります）</li>
+                  <li>表形式のデータが含まれるPDF</li>
+                  <li>複雑なレイアウトは正確に変換できない場合があります</li>
+                </ul>
+                <h3>変換のヒント</h3>
+                <ul>
+                  <li>シンプルな表構造のPDFが最適です</li>
+                  <li>セル結合が少ないPDFの方が良好な結果が得られます</li>
+                  <li>変換に失敗する場合は、PDFの品質や互換性に問題がある可能性があります</li>
+                </ul>
+              </div>
+            )}
+          </div>
 
           {/* Google広告用のスペース */}
           <div className="ads-container">
