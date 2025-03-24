@@ -9,13 +9,11 @@ const PDFConverter = () => {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
-  const [conversionType, setConversionType] = useState('text');
   const [processingStatus, setProcessingStatus] = useState('');
   const [pdfPreview, setPdfPreview] = useState(null);
   
   // PDF.jsのワーカー設定
   useEffect(() => {
-    // 特定のバージョンを指定して、存在するファイルを使用
     const pdfjsWorker = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
     pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
     console.log('Set PDF.js worker to:', pdfjsWorker);
@@ -46,45 +44,6 @@ const PDFConverter = () => {
       setFile(null);
       setPdfPreview(null);
       setError('PDFファイルのみ対応しています。別の形式のファイルが選択されました。');
-    }
-  };
-
-  // PDFからのテキスト抽出（シミュレーション版）
-  const extractTextFromPDF = async (pdfData) => {
-    try {
-      console.log('Starting text extraction simulation...');
-      setProcessingStatus('PDFからテキストを抽出中...');
-      
-      // 進行状況をシミュレート
-      for (let i = 0; i <= 100; i += 10) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-        setProgress(i);
-      }
-      
-      // ファイル名を含む動的なテキストを生成
-      const fileName = file ? file.name : 'document.pdf';
-      
-      // サンプルテキストを返す
-      return `ファイル「${fileName}」から抽出されたテキスト\n\n` + 
-        "PDFから抽出されたサンプルテキストです。\n\n" +
-        "このテキストは、PDF変換ツールで生成されました。\n\n" +
-        "============ サンプルデータ ============\n\n" +
-        "項目A：サンプルデータ1\n" +
-        "項目B：サンプルデータ2\n" +
-        "項目C：サンプルデータ3\n\n" +
-        "以下は表形式のデータの例：\n\n" +
-        "商品名\t数量\t単価\t合計\n" +
-        "商品A\t2\t1,000円\t2,000円\n" +
-        "商品B\t1\t3,000円\t3,000円\n" +
-        "商品C\t3\t500円\t1,500円\n\n" +
-        "合計: 6,500円\n\n" +
-        "=======================================\n\n" +
-        "※このテキストはシミュレーションによる出力で、\n" +
-        "実際のPDFの内容は反映されていません。";
-    } catch (error) {
-      console.error('テキスト抽出エラー:', error);
-      setError('テキスト抽出中にエラーが発生しました');
-      throw error;
     }
   };
   
@@ -146,72 +105,49 @@ const PDFConverter = () => {
       
       console.log('File read, size:', pdfData.byteLength, 'bytes');
       
-      if (conversionType === 'text') {
-        // テキスト変換処理
-        console.log('Converting to text format...');
-        const extractedText = await extractTextFromPDF(pdfData);
-        console.log('Text extraction completed, length:', extractedText.length);
-        
-        // テキストファイルとして保存
-        const blob = new Blob([extractedText], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${file.name.replace('.pdf', '')}.txt`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        
-        // リソースの解放
-        setTimeout(() => {
-          URL.revokeObjectURL(url);
-          setProcessingStatus('変換完了。テキストファイルがダウンロードされました。');
-        }, 100);
-      } else if (conversionType === 'excel') {
-        // Excel変換処理
-        console.log('Converting to Excel format...');
-        
-        // 表構造を抽出
-        const tableData = await extractTablesFromPDF(pdfData);
-        console.log('Table extraction completed, rows:', tableData.length);
-        
-        // ワークブックとワークシートを作成
-        const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.aoa_to_sheet(tableData);
-        
-        // 列幅の自動調整
-        const colWidths = tableData.reduce((acc, row) => {
-          row.forEach((cell, i) => {
-            const cellLength = cell ? cell.toString().length : 0;
-            acc[i] = Math.max(acc[i] || 0, cellLength);
-          });
-          return acc;
-        }, {});
-        
-        ws['!cols'] = Object.keys(colWidths).map(key => ({ width: colWidths[key] + 2 }));
-        
-        XLSX.utils.book_append_sheet(wb, ws, 'PDFデータ');
-        
-        // Excelファイルとして保存
-        const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-        const blob = new Blob([excelBuffer], { 
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      // Excel変換処理
+      console.log('Converting to Excel format...');
+      
+      // 表構造を抽出
+      const tableData = await extractTablesFromPDF(pdfData);
+      console.log('Table extraction completed, rows:', tableData.length);
+      
+      // ワークブックとワークシートを作成
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(tableData);
+      
+      // 列幅の自動調整
+      const colWidths = tableData.reduce((acc, row) => {
+        row.forEach((cell, i) => {
+          const cellLength = cell ? cell.toString().length : 0;
+          acc[i] = Math.max(acc[i] || 0, cellLength);
         });
-        
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${file.name.replace('.pdf', '')}.xlsx`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        
-        // リソースの解放
-        setTimeout(() => {
-          URL.revokeObjectURL(url);
-          setProcessingStatus('変換完了。Excelファイルがダウンロードされました。');
-        }, 100);
-      }
+        return acc;
+      }, {});
+      
+      ws['!cols'] = Object.keys(colWidths).map(key => ({ width: colWidths[key] + 2 }));
+      
+      XLSX.utils.book_append_sheet(wb, ws, 'PDFデータ');
+      
+      // Excelファイルとして保存
+      const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([excelBuffer], { 
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      });
+      
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${file.name.replace('.pdf', '')}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      
+      // リソースの解放
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        setProcessingStatus('変換完了。Excelファイルがダウンロードされました。');
+      }, 100);
       
       console.log('Conversion process completed successfully');
       setProgress(100);
@@ -226,31 +162,13 @@ const PDFConverter = () => {
   return (
     <div className="app-container">
       <header className="app-header">
-        <h1>PDF変換ツール</h1>
-        <p>PDFファイルをテキストやExcel形式に変換できます。すべての処理はブラウザ内で行われます。</p>
+        <h1>PDF to Excel 変換ツール</h1>
+        <p>PDFファイルをExcel形式に変換できます。すべての処理はブラウザ内で行われます。</p>
       </header>
 
       <div className="app-content">
         <div className="control-panel">
           <h2>変換設定</h2>
-          
-          <div className="conversion-type">
-            <label>変換形式を選択:</label>
-            <div className="type-buttons">
-              <button 
-                className={conversionType === 'text' ? 'active' : ''} 
-                onClick={() => setConversionType('text')}
-              >
-                テキスト
-              </button>
-              <button 
-                className={conversionType === 'excel' ? 'active' : ''} 
-                onClick={() => setConversionType('excel')}
-              >
-                Excel
-              </button>
-            </div>
-          </div>
           
           <div className="file-upload">
             <label>PDFファイルを選択:</label>
@@ -268,7 +186,7 @@ const PDFConverter = () => {
             onClick={handleConvert}
             disabled={!file || loading}
           >
-            {loading ? '変換中...' : '変換する'}
+            {loading ? '変換中...' : 'Excelに変換する'}
           </button>
 
           {/* Google広告用のスペース */}
@@ -313,7 +231,7 @@ const PDFConverter = () => {
       </div>
       
       <footer className="app-footer">
-        <p>© {new Date().getFullYear()} PDF変換ツール - プライバシーを重視した無料のオンラインPDF変換サービス</p>
+        <p>© {new Date().getFullYear()} PDF to Excel変換ツール - プライバシーを重視した無料のオンラインPDF変換サービス</p>
       </footer>
     </div>
   );
