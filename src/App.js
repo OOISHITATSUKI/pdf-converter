@@ -49,24 +49,119 @@ const PDFConverter = () => {
     }
   };
 
-  // シンプルなPDFからのテキスト抽出（実際の実装）
+  // PDFからのテキスト抽出（実際の実装）
   const extractTextFromPDF = async (pdfData) => {
     try {
       console.log('Starting text extraction from PDF...');
       setProcessingStatus('PDFからテキストを抽出中...');
       
-      // デモ用の進行状況シミュレーション - 実際の処理に問題がある場合
-      console.log('Simulating extraction progress...');
-      for (let i = 0; i <= 100; i += 10) {
-        await new Promise(resolve => setTimeout(resolve, 300));
-        setProgress(i);
+      // PDFドキュメントをロード
+      const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+      console.log(`PDF loaded, pages: ${pdf.numPages}`);
+      
+      let fullText = '';
+      
+      // 各ページからテキストを抽出
+      for (let i = 1; i <= pdf.numPages; i++) {
+        setProgress(Math.floor((i / pdf.numPages) * 100));
+        setProcessingStatus(`テキスト抽出中: ${i}/${pdf.numPages}ページ`);
+        
+        try {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items
+            .map(item => item.str)
+            .join(' ')
+            .replace(/\s+/g, ' '); // 余分な空白を削除
+          
+          fullText += pageText + '\n\n';
+          console.log(`Extracted text from page ${i}, length: ${pageText.length} chars`);
+        } catch (pageError) {
+          console.error(`Error extracting text from page ${i}:`, pageError);
+          fullText += `[Page ${i} text extraction failed]\n\n`;
+        }
       }
       
-      return "PDFから抽出されたテキストサンプルです。\n実際のPDFにあったテキストが抽出されます。\n表もある程度保持されます。";
+      return fullText;
     } catch (error) {
       console.error('PDFテキスト抽出エラー:', error);
-      setError('PDFテキスト抽出中にエラーが発生しました: ' + error.message);
-      throw error;
+      
+      // フォールバック：エラーが発生した場合は基本的なテキストを返す
+      return "PDF抽出エラー: " + error.message + 
+        "\n\nPDFが保護されているか、テキストレイヤーがない可能性があります。";
+    }
+  };
+  
+  // PDFからの表構造抽出（Excel用）
+  const extractTablesFromPDF = async (pdfData) => {
+    try {
+      console.log('Starting table extraction from PDF...');
+      setProcessingStatus('PDFから表データを抽出中...');
+      
+      // PDFドキュメントをロード
+      const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+      console.log(`PDF loaded, pages: ${pdf.numPages}`);
+      
+      let tableData = [];
+      
+      // 各ページから表構造を抽出
+      for (let i = 1; i <= pdf.numPages; i++) {
+        setProgress(Math.floor((i / pdf.numPages) * 100));
+        setProcessingStatus(`表データ抽出中: ${i}/${pdf.numPages}ページ`);
+        
+        try {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          
+          // テキスト項目を位置情報付きで取得
+          const textItems = textContent.items.map(item => ({
+            text: item.str,
+            x: item.transform[4], // X座標
+            y: item.transform[5], // Y座標
+            height: item.height,
+            width: item.width
+          }));
+          
+          // Y座標でグループ化して行を形成（同じ行にあるテキストアイテムをグループ化）
+          const rows = {};
+          const yTolerance = 3; // 同じ行と見なす高さの許容差
+          
+          textItems.forEach(item => {
+            // 近似Y座標を計算して同じ行のアイテムをグループ化
+            const roundedY = Math.round(item.y / yTolerance) * yTolerance;
+            if (!rows[roundedY]) {
+              rows[roundedY] = [];
+            }
+            rows[roundedY].push(item);
+          });
+          
+          // Y座標でソートして行順を維持
+          const sortedYCoordinates = Object.keys(rows).sort((a, b) => b - a); // 降順（PDFは下から上に座標が増える）
+          
+          // 各行をX座標でソートして列順を維持
+          sortedYCoordinates.forEach(y => {
+            rows[y].sort((a, b) => a.x - b.x);
+            
+            // テキストのみの配列に変換
+            const rowTexts = rows[y].map(item => item.text.trim()).filter(text => text.length > 0);
+            if (rowTexts.length > 0) {
+              tableData.push(rowTexts);
+            }
+          });
+          
+          console.log(`Extracted table data from page ${i}, rows: ${Object.keys(rows).length}`);
+        } catch (pageError) {
+          console.error(`Error extracting table from page ${i}:`, pageError);
+          tableData.push([`[Page ${i} extraction failed]`]);
+        }
+      }
+      
+      return tableData;
+    } catch (error) {
+      console.error('PDF表抽出エラー:', error);
+      
+      // フォールバック：エラーが発生した場合
+      return [["PDF表抽出エラー: " + error.message]];
     }
   };
 
@@ -86,23 +181,20 @@ const PDFConverter = () => {
       const reader = new FileReader();
       const pdfData = await new Promise((resolve, reject) => {
         reader.onload = e => resolve(e.target.result);
-        reader.onerror = e => reject(e);
+        reader.onerror = e => reject(new Error('ファイル読み込みエラー'));
         reader.readAsArrayBuffer(file);
       });
       
       console.log('File read, size:', pdfData.byteLength, 'bytes');
       
-      // テキスト抽出
-      const extractedText = await extractTextFromPDF(pdfData);
-      console.log('Text extraction completed, length:', extractedText.length);
-      
-      // 選択された形式に変換
-      let blob;
       if (conversionType === 'text') {
+        // テキスト変換処理
         console.log('Converting to text format...');
-        blob = new Blob([extractedText], { type: 'text/plain;charset=utf-8' });
+        const extractedText = await extractTextFromPDF(pdfData);
+        console.log('Text extraction completed, length:', extractedText.length);
         
         // テキストファイルとして保存
+        const blob = new Blob([extractedText], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -117,25 +209,21 @@ const PDFConverter = () => {
           setProcessingStatus('変換完了。テキストファイルがダウンロードされました。');
         }, 100);
       } else if (conversionType === 'excel') {
+        // Excel変換処理
         console.log('Converting to Excel format...');
-        // テキストを行に分割
-        const lines = extractedText.split('\n').filter(line => line.trim() !== '');
         
-        // 行をセルに分割
-        const data = lines.map(line => {
-          // タブ区切りか、複数スペース区切りでセルを分割
-          const cells = line.split(/\t+|\s{2,}/);
-          return cells;
-        });
+        // 表構造を抽出
+        const tableData = await extractTablesFromPDF(pdfData);
+        console.log('Table extraction completed, rows:', tableData.length);
         
         // ワークブックとワークシートを作成
         const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.aoa_to_sheet(data);
-        XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+        const ws = XLSX.utils.aoa_to_sheet(tableData);
+        XLSX.utils.book_append_sheet(wb, ws, 'PDFデータ');
         
         // Excelファイルとして保存
         const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-        blob = new Blob([excelBuffer], { 
+        const blob = new Blob([excelBuffer], { 
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
         });
         
@@ -158,7 +246,7 @@ const PDFConverter = () => {
       setProgress(100);
     } catch (err) {
       console.error('変換エラー:', err);
-      setError('変換処理中にエラーが発生しました: ' + err.message);
+      setError('変換処理中にエラーが発生しました: ' + (err.message || err));
     } finally {
       setLoading(false);
     }
