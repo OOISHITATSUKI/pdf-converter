@@ -1,11 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+// App.js
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
-import { FileText, Download, AlertCircle, CheckCircle, Loader, Info } from 'lucide-react';
+import './App.css';
 
-import './App.css'; // スタイルシート
+// PDF Workerのベースパス - publicフォルダにコピーされることを前提
+const PDF_WORKER_BASE_URL = `${process.env.PUBLIC_URL || ''}/pdf-worker`;
 
 const PDFConverter = () => {
+  // 状態の定義
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -16,75 +19,127 @@ const PDFConverter = () => {
   const [conversionSuccess, setConversionSuccess] = useState(false);
   const [showSupportedInfo, setShowSupportedInfo] = useState(false);
   const [lastExcelUrl, setLastExcelUrl] = useState(null);
+  const [isSimulationMode, setIsSimulationMode] = useState(false);
+  const [processingLogs, setProcessingLogs] = useState([]);
+  const [showDetailedLogs, setShowDetailedLogs] = useState(false);
+  const [workerVersion, setWorkerVersion] = useState('');
   
   const fileInputRef = useRef(null);
+  const processingLogRef = useRef([]);
   
-// PDF.jsのワーカー設定 - 複数の方法を試みる
-useEffect(() => {
-  const setupWorker = async () => {
-    try {
-      // 方法1: 既知の安定バージョンを使用
-      const pdfjsWorker = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.worker.min.js';
-      pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
-      console.log('Set PDF.js worker to fixed version:', pdfjsWorker);
-      
-      // ワーカーの初期化を確認
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      setWorkerReady(true);
-    } catch (err) {
-      console.error('Worker setup failed with fixed version:', err);
+  // 処理ログの追加関数
+  const addLog = useCallback((message) => {
+    const timestamp = new Date().toLocaleTimeString();
+    const logMessage = `${timestamp}: ${message}`;
+    console.log(logMessage);
+    
+    processingLogRef.current = [...processingLogRef.current, logMessage];
+    setProcessingLogs(processingLogRef.current);
+  }, []);
+  
+  // PDF.jsのワーカー設定 - 複数の方法を試みる
+  useEffect(() => {
+    const setupWorker = async () => {
+      addLog('PDF.jsワーカーの設定を開始します');
       
       try {
-        // 方法2: フォールバックとしてインラインワーカーを使用
-        const blob = new Blob([
-          `importScripts('https://unpkg.com/pdfjs-dist@2.14.305/build/pdf.worker.min.js');`
-        ], { type: 'application/javascript' });
+        // workerSrcの現在の値を確認
+        const currentWorkerSrc = pdfjsLib.GlobalWorkerOptions.workerSrc;
+        addLog(`現在のワーカーパス: ${currentWorkerSrc || 'なし'}`);
         
-        const workerUrl = URL.createObjectURL(blob);
-        pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
-        console.log('Using inline worker blob URL');
+        // 方法1: プロジェクトにバンドルされたワーカーを使用（推奨）
+        try {
+          const pdfjsWorker = `${PDF_WORKER_BASE_URL}/pdf.worker.min.js`;
+          pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+          addLog(`バンドルされたワーカーを設定: ${pdfjsWorker}`);
+          
+          // ワーカーの初期化を確認
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // バージョン確認
+          const version = pdfjsLib.version;
+          setWorkerVersion(version);
+          addLog(`PDF.jsバージョン: ${version}`);
+          
+          setWorkerReady(true);
+          return;
+        } catch (bundleErr) {
+          addLog(`バンドルワーカー設定失敗: ${bundleErr.message}`);
+        }
         
-        // ワーカーの初期化を確認
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        setWorkerReady(true);
-      } catch (inlineErr) {
-        console.error('Inline worker setup failed:', inlineErr);
+        // 方法2: CDNを使用（フォールバック1）
+        try {
+          // ライブラリのバージョンに合わせる
+          const version = pdfjsLib.version || '2.14.305';
+          const pdfjsWorker = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${version}/pdf.worker.min.js`;
+          pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+          addLog(`CDNワーカーを設定: ${pdfjsWorker}`);
+          
+          // ワーカーの初期化を確認
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          setWorkerReady(true);
+          return;
+        } catch (cdnErr) {
+          addLog(`CDNワーカー設定失敗: ${cdnErr.message}`);
+        }
         
-        // 方法3: ワーカーなしモード（限定機能）
+        // 方法3: インラインワーカーを使用（フォールバック2）
+        try {
+          const version = '2.14.305'; // 安定版
+          const workerScript = `importScripts('https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.js');`;
+          const blob = new Blob([workerScript], { type: 'application/javascript' });
+          const workerUrl = URL.createObjectURL(blob);
+          pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+          addLog(`インラインワーカーを設定: Blob URL使用`);
+          
+          // クリーンアップ関数を設定
+          const cleanup = () => {
+            URL.revokeObjectURL(workerUrl);
+            addLog('インラインワーカーのBlobを解放');
+          };
+          
+          // 初期化確認
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          setWorkerReady(true);
+          return;
+        } catch (inlineErr) {
+          addLog(`インラインワーカー設定失敗: ${inlineErr.message}`);
+        }
+        
+        // 方法4: ワーカーなしモード（最終フォールバック）
         pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-        console.log('Falling back to workerless mode');
+        addLog('ワーカーなしモードにフォールバック');
+        setWorkerReady(true);
+      } catch (err) {
+        addLog(`ワーカー設定中のエラー: ${err.message}`);
+        setWorkerReady(true); // UIをブロックしないために有効化
+      }
+    };
+    
+    setupWorker();
+    
+    // ワーカー設定のステータスチェック
+    const checkWorkerStatus = setTimeout(() => {
+      if (!workerReady) {
+        addLog('ワーカー設定タイムアウト - UIを有効化');
         setWorkerReady(true);
       }
-    }
-  };
-  
-  setupWorker();
-  
-  // ワーカー設定のステータスチェック
-  const checkWorkerStatus = setTimeout(() => {
-    if (!workerReady) {
-      console.warn('Worker setup taking too long, enabling UI anyway');
-      setWorkerReady(true);
-    }
-  }, 5000); // 5秒後にタイムアウト
-  
-  return () => {
-    clearTimeout(checkWorkerStatus);
-    // リソースの解放
-    if (pdfPreview) {
-      URL.revokeObjectURL(pdfPreview);
-    }
-    if (lastExcelUrl) {
-      URL.revokeObjectURL(lastExcelUrl);
-    }
-  };
-	}, [pdfPreview, lastExcelUrl, workerReady]); 
-	
-	// ここに依存配列の変数を追加
-	
-	
+    }, 5000); // 5秒後にタイムアウト
+    
+    return () => {
+      clearTimeout(checkWorkerStatus);
+      // リソースの解放
+      if (pdfPreview) {
+        URL.revokeObjectURL(pdfPreview);
+      }
+      if (lastExcelUrl) {
+        URL.revokeObjectURL(lastExcelUrl);
+      }
+    };
+  }, [addLog]);
 
-  const handleFileChange = (e) => {
+  // ファイル選択ハンドラー
+  const handleFileChange = useCallback((e) => {
     const selectedFile = e.target.files?.[0] || null;
     
     // 以前のファイルに関するリソースを解放
@@ -94,7 +149,7 @@ useEffect(() => {
     }
     
     if (selectedFile && selectedFile.type === 'application/pdf') {
-      console.log('PDF file selected:', selectedFile.name);
+      addLog(`PDFファイル選択: ${selectedFile.name} (${Math.round(selectedFile.size / 1024)} KB)`);
       setFile(selectedFile);
       
       // ファイルプレビューの作成
@@ -104,15 +159,47 @@ useEffect(() => {
       setProcessingStatus('ファイルはブラウザ内で処理され、サーバーにアップロードされません。');
       setError('');
       setConversionSuccess(false);
+      setIsSimulationMode(false);
+      setProgress(0);
+      processingLogRef.current = [];
+      setProcessingLogs([]);
     } else if (selectedFile) {
       setFile(null);
       setPdfPreview(null);
       setError('PDFファイルのみ対応しています。別の形式のファイルが選択されました。');
+      addLog('非PDFファイルが選択されました');
     }
-  };
+  }, [pdfPreview, addLog]);
+  
+  // ドラッグ&ドロップハンドラー
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (e.dataTransfer.files.length > 0) {
+      const droppedFile = e.dataTransfer.files[0];
+      if (droppedFile.type === 'application/pdf') {
+        const input = fileInputRef.current;
+        // FileInputに設定するためのDataTransferオブジェクトを作成
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(droppedFile);
+        input.files = dataTransfer.files;
+        handleFileChange({ target: input });
+      } else {
+        setError('PDFファイルのみ対応しています。');
+        addLog('ドラッグ&ドロップ: 非PDFファイルがドロップされました');
+      }
+    }
+  }, [handleFileChange, addLog]);
+  
+  // ドラッグオーバーハンドラー
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
   
   // 同じ行と見なすY座標の許容差を動的に計算
-  const calculateYTolerance = (textItems) => {
+  const calculateYTolerance = useCallback((textItems) => {
     if (!textItems || textItems.length < 10) return 5; // デフォルト値
     
     // Y座標の差分を収集
@@ -139,16 +226,60 @@ useEffect(() => {
       .sort((a, b) => b[1] - a[1])[0][0];
     
     return Math.max(3, Math.ceil(parseInt(mostCommonDiff) * 0.3));
-  };
+  }, []);
   
-  // PDFからの表構造抽出（実際の実装を試みる）
-  const extractTablesFromPDF = async (pdfData) => {
+  // X座標に基づいて列の境界を推定
+  const estimateColumnBoundaries = useCallback((rows) => {
+    // すべてのテキスト項目のX座標を収集
+    const allXPositions = [];
+    Object.values(rows).forEach(row => {
+      row.forEach(item => {
+        allXPositions.push(item.x);
+        // 項目の終了位置も考慮
+        if (item.width) {
+          allXPositions.push(item.x + item.width);
+        }
+      });
+    });
+    
+    // X座標をソートして重複を削除
+    const uniqueXPositions = [...new Set(allXPositions)].sort((a, b) => a - b);
+    
+    // 近接する値をクラスタリング
+    const xClusters = [];
+    const xThreshold = 10; // クラスタリングの許容差
+    
+    uniqueXPositions.forEach(x => {
+      const existingCluster = xClusters.find(
+        cluster => Math.abs(cluster.avg - x) <= xThreshold
+      );
+      
+      if (existingCluster) {
+        existingCluster.positions.push(x);
+        existingCluster.avg = existingCluster.positions.reduce((sum, pos) => sum + pos, 0) / 
+                              existingCluster.positions.length;
+      } else {
+        xClusters.push({
+          positions: [x],
+          avg: x
+        });
+      }
+    });
+    
+    // クラスターの平均値を列の境界として使用
+    return xClusters.map(cluster => cluster.avg).sort((a, b) => a - b);
+  }, []);
+  
+  // PDFからの表構造抽出
+  const extractTablesFromPDF = useCallback(async (pdfData) => {
     try {
-      console.log('Starting PDF data extraction...');
+      addLog('PDF抽出処理を開始します');
       setProcessingStatus('PDFからデータを抽出中...');
+      setIsSimulationMode(false);
       
       if (!workerReady) {
-        console.warn('Worker is not ready, using simulation mode');
+        addLog('ワーカーが準備できていません。シミュレーションモードを使用します');
+        setIsSimulationMode(true);
         return simulateTableExtraction();
       }
       
@@ -157,8 +288,10 @@ useEffect(() => {
       
       // 読み込みタイムアウトの設定（20秒）
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('PDF loading timeout')), 20000)
+        setTimeout(() => reject(new Error('PDF読み込みがタイムアウトしました')), 20000)
       );
+      
+      addLog('PDFドキュメントの読み込みを開始します');
       
       // タイムアウトか読み込み完了のどちらか早い方を採用
       const pdf = await Promise.race([
@@ -166,7 +299,7 @@ useEffect(() => {
         timeoutPromise
       ]);
       
-      console.log(`PDF loaded, pages: ${pdf.numPages}`);
+      addLog(`PDF読み込み完了: ${pdf.numPages}ページ`);
       
       let allTableData = [];
       
@@ -179,14 +312,17 @@ useEffect(() => {
       for (let i = 1; i <= pdf.numPages; i++) {
         setProgress(Math.floor((i / pdf.numPages) * 100));
         setProcessingStatus(`データ抽出中: ${i}/${pdf.numPages}ページ`);
+        addLog(`ページ ${i} の処理を開始`);
         
         try {
           // ページの取得（タイムアウト付き）
           const pagePromise = pdf.getPage(i);
           const page = await Promise.race([
             pagePromise,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Page loading timeout')), 5000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error('ページ読み込みタイムアウト')), 5000))
           ]);
+          
+          addLog(`ページ ${i} を読み込みました`);
           
           // ページ情報を追加
           allTableData.push([`--- ページ ${i} ---`]);
@@ -195,13 +331,16 @@ useEffect(() => {
           const textContentPromise = page.getTextContent();
           const textContent = await Promise.race([
             textContentPromise,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Text extraction timeout')), 5000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error('テキスト抽出タイムアウト')), 5000))
           ]);
           
           if (!textContent || !textContent.items || textContent.items.length === 0) {
+            addLog(`ページ ${i} にはテキストが含まれていないか、抽出できませんでした`);
             allTableData.push(["このページにはテキストが含まれていないか、抽出できませんでした"]);
             continue;
           }
+          
+          addLog(`ページ ${i} から ${textContent.items.length} 個のテキスト要素を抽出しました`);
           
           // テキスト項目を位置情報付きで取得
           const textItems = textContent.items
@@ -214,23 +353,25 @@ useEffect(() => {
                   y: Math.round(item.transform[5] || 0),
                   width: item.width || 0,
                   height: item.height || 0,
-                  fontName: item.fontName
+                  fontName: item.fontName,
+                  fontSize: item.fontSize
                 };
               } catch (e) {
-                console.warn('Invalid text item:', e);
+                addLog(`テキスト項目の処理中にエラー: ${e.message}`);
                 return null;
               }
             })
             .filter(item => item !== null);
           
           if (textItems.length === 0) {
+            addLog(`ページ ${i} には有効なテキスト要素が見つかりませんでした`);
             allTableData.push(["このページには有効なテキスト要素が見つかりませんでした"]);
             continue;
           }
           
           // 動的に行の許容差を計算
           const yTolerance = calculateYTolerance(textItems);
-          console.log(`Using Y tolerance of ${yTolerance} for page ${i}`);
+          addLog(`ページ ${i} の行許容差: ${yTolerance}`);
           
           // Y座標でグループ化して行を形成
           const rows = {};
@@ -245,6 +386,10 @@ useEffect(() => {
             }
             rows[roundedY].push(item);
           });
+          
+          // 列の境界を推定（X座標に基づいて）
+          const columnBoundaries = estimateColumnBoundaries(rows);
+          addLog(`推定された列数: ${columnBoundaries.length - 1}`);
           
           // Y座標でソート（PDFは下から上に座標が増えるため降順）
           const sortedYCoordinates = Object.keys(rows).sort((a, b) => b - a);
@@ -265,9 +410,10 @@ useEffect(() => {
               .slice(0, 2)
               .map(entry => entry[0]);
             
-            // 一般的でないフォントを使用しているアイテムを見出しの候補とする
+            // 一般的でないフォントや大きいフォントサイズを使用しているアイテムを見出しの候補とする
             return items.some(item => 
-              item.fontName && !commonFonts.includes(item.fontName)
+              (item.fontName && !commonFonts.includes(item.fontName)) ||
+              (item.fontSize && item.fontSize > 12) // 12ptより大きいフォントを見出しとみなす
             );
           };
           
@@ -314,9 +460,11 @@ useEffect(() => {
             allTableData.push([]);
           }
           
+          addLog(`ページ ${i} の処理が完了しました`);
+          
         } catch (pageError) {
-          console.error(`Error processing page ${i}:`, pageError);
-          allTableData.push([`[ページ ${i} の処理中にエラーが発生しました: ${pageError.message || 'Unknown error'}]`]);
+          addLog(`ページ ${i} の処理中にエラーが発生: ${pageError.message}`);
+          allTableData.push([`[ページ ${i} の処理中にエラーが発生しました: ${pageError.message || '不明なエラー'}]`]);
         }
       }
       
@@ -325,24 +473,48 @@ useEffect(() => {
       allTableData.push(["PDF変換情報"]);
       allTableData.push(["変換日時", new Date().toLocaleString()]);
       allTableData.push(["ファイルサイズ", `${Math.round(pdfData.byteLength / 1024)} KB`]);
+      allTableData.push(["PDF.jsバージョン", pdfjsLib.version || 'N/A']);
+      allTableData.push(["抽出モード", "実データ抽出"]);
       
+      addLog('データ抽出完了');
       return allTableData;
     } catch (error) {
-      console.error('PDF抽出エラー:', error);
+      addLog(`PDF抽出エラー: ${error.message}`);
       
       // エラーの場合はシミュレーションモードにフォールバック
-      console.log('Falling back to simulation mode due to error');
+      addLog('シミュレーションモードにフォールバック');
+      setIsSimulationMode(true);
       return simulateTableExtraction();
     }
-  };
+  }, [file, workerReady, addLog, calculateYTolerance, estimateColumnBoundaries]);
   
   // シミュレーションモード（実際の抽出が失敗した場合のバックアップ）
-  const simulateTableExtraction = () => {
-    console.log('Using simulation mode for table extraction');
+  const simulateTableExtraction = useCallback(() => {
+    addLog('シミュレーションモードを使用');
     setProcessingStatus('シミュレーションモードでデータを生成中...');
     
     // ファイル名を取得
     const fileName = file ? file.name : 'document.pdf';
+    
+    // 日付文字列を安全に生成
+    let dateStr = "";
+    try {
+      dateStr = new Date().toLocaleString();
+    } catch (e) {
+      dateStr = new Date().toString();
+    }
+    
+    // ファイルサイズを安全に計算
+    let fileSizeStr = "不明";
+    if (file && typeof file.size === 'number') {
+      try {
+        fileSizeStr = `${Math.round(file.size / 1024)} KB`;
+      } catch (e) {
+        fileSizeStr = "計算エラー";
+      }
+    }
+    
+    addLog('シミュレーションデータ生成完了');
     
     // サンプルデータを返す
     return [
@@ -358,13 +530,15 @@ useEffect(() => {
       ["合計", "", "", "6,500円"],
       [],
       ["PDF変換情報"],
-      ["変換日時", new Date().toLocaleString()],
-      ["ファイルサイズ", file ? `${Math.round(file.size / 1024)} KB` : "不明"],
+      ["変換日時", dateStr],
+      ["ファイルサイズ", fileSizeStr],
+      ["PDF.jsバージョン", pdfjsLib.version || 'N/A'],
       ["モード", "シミュレーション（フォールバック）"]
     ];
-  };
+  }, [file, addLog]);
 
-  const handleConvert = async () => {
+  // 変換処理の開始
+  const handleConvert = useCallback(async () => {
     if (!file) {
       setError('ファイルを選択してください');
       return;
@@ -374,7 +548,10 @@ useEffect(() => {
     setError('');
     setProgress(0);
     setConversionSuccess(false);
-    console.log('Starting conversion process...');
+    setIsSimulationMode(false);
+    processingLogRef.current = [];
+    setProcessingLogs([]);
+    addLog('変換処理を開始');
     
     // 以前のExcel URLがあれば解放
     if (lastExcelUrl) {
@@ -384,6 +561,7 @@ useEffect(() => {
     
     try {
       // ファイルの内容をArrayBufferとして読み込む
+      addLog('PDFファイルの読み込みを開始');
       const reader = new FileReader();
       const pdfData = await new Promise((resolve, reject) => {
         reader.onload = e => resolve(e.target.result);
@@ -391,14 +569,17 @@ useEffect(() => {
         reader.readAsArrayBuffer(file);
       });
       
-      console.log('File read, size:', pdfData.byteLength, 'bytes');
+      addLog(`ファイル読み込み完了: ${Math.round(pdfData.byteLength / 1024)} KB`);
       
       // Excel変換処理
-      console.log('Converting to Excel format...');
+      addLog('Excel形式への変換を開始');
       
       // 表構造を抽出
       const tableData = await extractTablesFromPDF(pdfData);
-      console.log('Table extraction completed, rows:', tableData.length);
+      addLog(`テーブル抽出完了: ${tableData.length} 行のデータ`);
+      
+      // Excel生成処理を開始
+      setProcessingStatus('Excelファイルの生成中...');
       
       // ワークブックとワークシートを作成
       const wb = XLSX.utils.book_new();
@@ -433,30 +614,31 @@ useEffect(() => {
       a.click();
       document.body.removeChild(a);
       
-      console.log('Conversion process completed successfully');
+      addLog('Excel変換完了、ファイルのダウンロードを開始');
       setProgress(100);
       setConversionSuccess(true);
       setProcessingStatus('変換完了。Excelファイルがダウンロードされました。');
       
     } catch (err) {
-      console.error('変換エラー:', err);
+      addLog(`変換エラー: ${err.message}`);
       setError('変換処理中にエラーが発生しました: ' + (err.message || err));
     } finally {
       setLoading(false);
     }
-  };
+  }, [file, lastExcelUrl, extractTablesFromPDF, addLog]);
   
   // 変換済みファイルの再ダウンロード
-  const handleRedownload = () => {
+  const handleRedownload = useCallback(() => {
     if (!lastExcelUrl || !file) return;
     
+    addLog('Excelファイルの再ダウンロード');
     const a = document.createElement('a');
     a.href = lastExcelUrl;
     a.download = `${file.name.replace('.pdf', '')}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-  };
+  }, [lastExcelUrl, file]);
 
   return (
     <div className="app-container">
@@ -465,33 +647,23 @@ useEffect(() => {
         <p>PDFファイルをExcel形式に変換できます。すべての処理はブラウザ内で行われます。</p>
       </header>
 
+      {workerVersion && (
+        <div className="worker-info">
+          <p>PDF.js バージョン: {workerVersion}</p>
+        </div>
+      )}
+
       <div className="app-content">
         <div className="control-panel">
           <h2>変換設定</h2>
           
-          <div className="file-upload-area" 
-               onClick={() => fileInputRef.current.click()}
-               onDrop={(e) => {
-                 e.preventDefault();
-                 e.stopPropagation();
-                 if (e.dataTransfer.files.length > 0) {
-                   const droppedFile = e.dataTransfer.files[0];
-                   if (droppedFile.type === 'application/pdf') {
-                     const input = fileInputRef.current;
-                     const dataTransfer = new DataTransfer();
-                     dataTransfer.items.add(droppedFile);
-                     input.files = dataTransfer.files;
-                     handleFileChange({ target: input });
-                   } else {
-                     setError('PDFファイルのみ対応しています。');
-                   }
-                 }
-               }}
-               onDragOver={(e) => {
-                 e.preventDefault();
-                 e.stopPropagation();
-               }}>
-            <FileText className="file-icon" />
+          <div 
+            className="file-upload-area" 
+            onClick={() => fileInputRef.current.click()}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+          >
+            <div className="file-icon">📄</div>
             <p>クリックまたはドラッグ＆ドロップでPDFファイルを選択</p>
             <input
               ref={fileInputRef}
@@ -508,14 +680,26 @@ useEffect(() => {
             )}
           </div>
           
-          {error && <div className="error-message">
-            <AlertCircle className="icon" />
-            <span>{error}</span>
-          </div>}
+          {error && (
+            <div className="error-message">
+              <span className="icon">⚠️</span>
+              <span>{error}</span>
+            </div>
+          )}
+          
+          {isSimulationMode && (
+            <div className="simulation-notice">
+              <span className="icon">ℹ️</span>
+              <span>
+                <strong>注意:</strong> PDFの解析に問題が発生したため、シミュレーションモードを使用しています。
+                実際のPDF内容は反映されていません。
+              </span>
+            </div>
+          )}
           
           {conversionSuccess && (
             <div className="success-message">
-              <CheckCircle className="icon" />
+              <span className="icon">✅</span>
               <span>変換に成功しました！Excelファイルをダウンロードしました。</span>
             </div>
           )}
@@ -527,7 +711,7 @@ useEffect(() => {
               disabled={!file || loading || !workerReady}
             >
               {!workerReady ? 'ロード中...' : loading ? '変換中...' : 'Excelに変換する'}
-              {loading && <Loader className="spinner-icon" />}
+              {loading && <span className="spinner-icon">🔄</span>}
             </button>
             
             {conversionSuccess && (
@@ -535,7 +719,7 @@ useEffect(() => {
                 className="download-button"
                 onClick={handleRedownload}
               >
-                <Download className="icon" />
+                <span className="icon">⬇️</span>
                 再ダウンロード
               </button>
             )}
@@ -546,7 +730,7 @@ useEffect(() => {
               className="info-button"
               onClick={() => setShowSupportedInfo(!showSupportedInfo)}
             >
-              <Info className="icon" />
+              <span className="icon">ℹ️</span>
               サポート対象PDFについて
             </button>
             
@@ -567,6 +751,26 @@ useEffect(() => {
               </div>
             )}
           </div>
+          
+          <div className="logs-control">
+            <button 
+              className="toggle-logs-button"
+              onClick={() => setShowDetailedLogs(!showDetailedLogs)}
+            >
+              {showDetailedLogs ? '処理ログを隠す' : '処理ログを表示'}
+            </button>
+          </div>
+          
+          {showDetailedLogs && (
+            <div className="processing-logs">
+              <h3>処理ログ</h3>
+              <div className="logs-container">
+                {processingLogs.map((log, index) => (
+                  <div key={index} className="log-entry">{log}</div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Google広告用のスペース */}
           <div className="ads-container">
@@ -595,25 +799,3 @@ useEffect(() => {
           {!loading && processingStatus && (
             <p className="status-message">{processingStatus}</p>
           )}
-        </div>
-        
-        <div className="preview-panel">
-          <h2>プレビュー</h2>
-          {pdfPreview ? (
-            <iframe src={pdfPreview} title="PDF Preview"></iframe>
-          ) : (
-            <div className="preview-placeholder">
-              <p>PDFファイルをアップロードするとここにプレビューが表示されます</p>
-            </div>
-          )}
-        </div>
-      </div>
-      
-      <footer className="app-footer">
-        <p>© {new Date().getFullYear()} PDF to Excel変換ツール - プライバシーを重視した無料のオンラインPDF変換サービス</p>
-      </footer>
-    </div>
-  );
-};
-
-export default PDFConverter;
